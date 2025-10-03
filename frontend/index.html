@@ -37,7 +37,7 @@
                 if (json.error) {
                     result.textContent = "Error: " + json.error;
                 } else {
-                    result.textContent = "DPS: " + Math.round(json.dps);
+                    window.location.href = "/quicksim/" + json.id;
                 }
             } catch (err) {
                 result.textContent = "Server error: " + err;
