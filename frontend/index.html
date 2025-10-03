@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>SimC Web Interface</title>
+</head>
+
+<body>
+    <h1>SimC Simulation</h1>
+    <form id="sim-form">
+        <label for="input_content">SimC input:</label><br>
+        <textarea id="input_content" name="input_content" rows="20" cols="80"></textarea><br>
+        <button type="submit">Run</button>
+    </form>
+
+    <p id="result"></p>
+
+    <script>
+        const form = document.getElementById('sim-form');
+        const result = document.getElementById('result');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const inputContent = document.getElementById('input_content').value;
+
+            const data = new URLSearchParams();
+            data.append('input_content', inputContent);
+
+            try {
+                const response = await fetch('/run_simulation', {
+                    method: 'POST',
+                    body: data
+                });
+
+                const json = await response.json();
+                if (json.error) {
+                    result.textContent = "Error: " + json.error;
+                } else {
+                    result.textContent = "DPS: " + Math.round(json.dps);
+                }
+            } catch (err) {
+                result.textContent = "Server error: " + err;
+            }
+        });
+    </script>
+</body>
+
+</html>
