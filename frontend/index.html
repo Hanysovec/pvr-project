@@ -18,7 +18,6 @@
 
     <script>
         const form = document.getElementById('sim-form');
-        const result = document.getElementById('result');
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -27,23 +26,18 @@
             const data = new URLSearchParams();
             data.append('input_content', inputContent);
 
-            try {
-                const response = await fetch('/run_simulation', {
-                    method: 'POST',
-                    body: data
-                });
+            const response = await fetch('/run_simulation', {
+                method: 'POST',
+                body: data,
+                redirect: "follow"
+            });
 
-                const json = await response.json();
-                if (json.error) {
-                    result.textContent = "Error: " + json.error;
-                } else {
-                    window.location.href = "/quicksim/" + json.id;
-                }
-            } catch (err) {
-                result.textContent = "Server error: " + err;
+            if (response.redirected) {
+                window.location.href = response.url;
             }
         });
     </script>
+
 </body>
 
 </html>

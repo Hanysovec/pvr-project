@@ -1,23 +1,16 @@
 use axum::{
-    Json, Router,
+    Router,
     extract::{Form, Path},
-    response::Html,
+    response::{Html, Json, Redirect},
     routing::{get, post},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
-use std::{fs, io::Write, net::SocketAddr};
-use tempfile::NamedTempFile;
+use std::{fs, net::SocketAddr};
 use tower_http::services::ServeDir;
 use uuid::Uuid;
 
 use crate::simulate;
-
-#[derive(Serialize)]
-struct SimulationResponse {
-    id: String,
-    error: Option<String>,
-}
 
 #[derive(Deserialize)]
 struct SimulationInput {
@@ -25,59 +18,79 @@ struct SimulationInput {
 }
 
 pub async fn run_server() -> Result<(), String> {
-    async fn post_simulation(Form(input): Form<SimulationInput>) -> Json<SimulationResponse> {
+    async fn post_simulation(Form(input): Form<SimulationInput>) -> Redirect {
         let id = Uuid::new_v4().to_string();
+        let simc_file = format!("files/{}.simc", id);
         let output_file = format!("files/{}.json", id);
 
-        let mut temp_file = match NamedTempFile::new() {
-            Ok(f) => f,
-            Err(e) => {
-                return Json(SimulationResponse {
-                    id,
-                    error: Some(format!("Failed to create temp file: {}", e)),
-                });
-            }
-        };
-
-        if let Err(e) = write!(
-            temp_file,
-            "{}\nmax_time=300\niterations=10000\n",
-            input.input_content
+        if let Err(e) = fs::write(
+            &simc_file,
+            format!("{}\nmax_time=300\niterations=10000\n", input.input_content),
         ) {
-            return Json(SimulationResponse {
-                id,
-                error: Some(format!("Failed to write temp file: {}", e)),
-            });
+            eprintln!("Error while writing: {}", e);
         }
 
-        let temp_path = temp_file.path().to_str().unwrap();
+        let simc_file_clone = simc_file.clone();
+        let output_file_clone = output_file.clone();
+        tokio::spawn(async move {
+            if let Err(e) = simulate::run_simc(&simc_file_clone, &output_file_clone) {
+                eprintln!("Error simulating: {}", e);
+            }
+            if let Err(e) = std::fs::remove_file(&simc_file_clone) {
+                eprintln!("Error while removing file: {}", e);
+            }
+        });
 
-        let result = match simulate::run_simc(temp_path, &output_file) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(format!("Simulation failed: {}", e)),
-        };
-
-        Json(SimulationResponse {
-            id,
-            error: result.err(),
-        })
+        Redirect::to(&format!("/quicksim/{}", id))
     }
 
     async fn get_quicksim(Path(id): Path<String>) -> Html<String> {
-        let file = format!("files/{}.json", id);
+        Html(format!(
+            r#"
+            <h1>QuickSim Result</h1>
+            <div id="result">Simulation running</div>
+            <script>
+                async function check() {{
+                    let res = await fetch("/quicksim/{id}/result");
+                    if (res.ok) {{
+                        let json = await res.json();
+                        if (json.dps) {{
+                            document.getElementById("result").textContent = "DPS: " + Math.round(json.dps);
+                            return;
+                        }}
+                        if (json.error && json.error !== "Simulation running") {{
+                            document.getElementById("result").textContent = "Error: " + json.error;
+                            return;
+                        }}
+                    }}
+                    setTimeout(check, 2000);
+                }}
+                check();
+            </script>
+        "#
+        ))
+    }
 
-        match load_result(&file) {
-            Ok(dps) => Html(format!(
-                "<h1>QuickSim Result</h1><p>DPS: {}</p>",
-                dps.round()
-            )),
-            Err(e) => Html(format!("<h1>Error</h1><p>{}</p>", e)),
+    async fn get_quicksim_result(Path(id): Path<String>) -> Json<Value> {
+        let file = format!("files/{}.json", id);
+        if let Ok(data) = fs::read_to_string(&file) {
+            if let Ok(v) = serde_json::from_str::<Value>(&data) {
+                if let Some(dps) = v["sim"]["players"]
+                    .as_array()
+                    .and_then(|players| players.get(0))
+                    .and_then(|player| player["collected_data"]["dps"]["mean"].as_f64())
+                {
+                    return Json(serde_json::json!({ "dps": dps }));
+                }
+            }
         }
+        Json(serde_json::json!({ "error": "Simulation running" }))
     }
 
     let app = Router::new()
         .route("/run_simulation", post(post_simulation))
         .route("/quicksim/{id}", get(get_quicksim))
+        .route("/quicksim/{id}/result", get(get_quicksim_result))
         .fallback_service(ServeDir::new("frontend"));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -85,23 +98,9 @@ pub async fn run_server() -> Result<(), String> {
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
-        .map_err(|e| format!("Failed to bind TCP listener: {}", e))?;
+        .map_err(|e| format!("Error binding: {}", e))?;
 
     axum::serve(listener, app.into_make_service())
         .await
-        .map_err(|e| format!("Server error: {}", e))
-}
-
-fn load_result(file: &str) -> Result<f64, String> {
-    let data =
-        fs::read_to_string(file).map_err(|e| format!("Failed to read file {}: {}", file, e))?;
-
-    let v: Value =
-        serde_json::from_str(&data).map_err(|e| format!("Failed to parse JSON: {}", e))?;
-
-    v["sim"]["players"]
-        .as_array()
-        .and_then(|players| players.get(0))
-        .and_then(|player| player["collected_data"]["dps"]["mean"].as_f64())
-        .ok_or("Could not find DPS".to_string())
+        .map_err(|e| format!("Error server: {}", e))
 }
