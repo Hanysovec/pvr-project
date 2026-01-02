@@ -10,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
-    collections::HashMap,
     env, fs,
     net::SocketAddr,
     sync::Arc,
@@ -142,14 +141,6 @@ struct GemDetail {
 struct ItemDetailsQuery {
     bonus: Option<String>,
     gems: Option<String>,
-}
-
-#[derive(Serialize)]
-struct ItemDetailsResponse {
-    icon_url: String,
-    stats_html: String,
-    weapon_type: String,
-    gems: Vec<GemDetail>,
 }
 
 const MAX_RUNNING_SIMS: usize = 2;
@@ -568,98 +559,6 @@ async fn get_item_tooltip(
     })
 }
 
-async fn get_item_details(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Query(params): Query<ItemDetailsQuery>,
-) -> Json<ItemDetailsResponse> {
-    
-    let token = match get_blizzard_token(&state).await {
-        Ok(t) => t,
-        Err(e) => return Json(ItemDetailsResponse {
-            icon_url: "".into(),
-            stats_html: format!("Error auth: {}", e),
-            weapon_type: "".into(),
-            gems: vec![],
-        }),
-    };
-
-    let client = &state.http_client;
-
-    let media_url = format!("https://eu.api.blizzard.com/data/wow/media/item/{}?namespace=static-eu&locale=en_US", id);
-    let mut item_url = format!("https://eu.api.blizzard.com/data/wow/item/{}?namespace=static-eu&locale=en_US", id);
-
-    if let Some(bonus_str) = &params.bonus {
-        if !bonus_str.is_empty() {
-            let api_bonus = bonus_str.replace("/", ",");
-            item_url.push_str(&format!("&bonusList={}", api_bonus));
-        }
-    }
-
-    let media_future = client.get(&media_url).bearer_auth(&token).send();
-    let item_future = client.get(&item_url).bearer_auth(&token).send();
-
-    let gems_future = async {
-        if let Some(gems_str) = &params.gems {
-            if !gems_str.is_empty() {
-                let futures = gems_str.split(',')
-                    .filter(|s| !s.is_empty())
-                    .map(|gem_id| get_gem_detail(client, &token, gem_id));
-                
-                return join_all(futures).await;
-            }
-        }
-        vec![]
-    };
-
-    let (media_res, item_res, gems_res) = tokio::join!(
-        media_future,
-        item_future,
-        gems_future
-    );
-    
-    let mut icon_url = "https://render.worldofwarcraft.com/eu/icons/56/inv_misc_questionmark.jpg".to_string();
-    if let Ok(res) = media_res {
-        if let Ok(media) = res.json::<BlizzardMediaResponse>().await {
-            if let Some(assets) = media.assets {
-                if let Some(icon) = assets.iter().find(|a| a.key == "icon") {
-                    icon_url = icon.value.clone();
-                }
-            }
-        }
-    }
-
-    let mut stats_html = String::new();
-    let mut weapon_type = String::new();
-
-    if let Ok(res) = item_res {
-        if let Ok(data) = res.json::<BlizzardItemDataResponse>().await {
-            let type_name = data.inventory_type.name.as_str();
-            weapon_type = match type_name {
-                "Two-Hand" | "Ranged" | "Polearms" | "Staves" => "2H".to_string(),
-                "One-Hand" | "Main Hand" | "Daggers" | "Maces" | "Axes" | "Swords" | "Warglaives" => "1H".to_string(),
-                "Off Hand" | "Shields" | "Held In Off-hand" => "OH".to_string(),
-                _ => "".to_string(),
-            };
-
-            if let Some(stats) = data.preview_item.stats {
-                for stat in stats {
-                    let text = if let Some(d) = stat.display { d.display_string } else { format!("+{} {}", stat.value, stat.stat_type.name) };
-                    stats_html.push_str(&format!("<div class='stat-line'>{}</div>", text));
-                }
-            }
-        }
-    }
-
-    let gems: Vec<GemDetail> = gems_res.into_iter().filter_map(|g| g).collect();
-
-    Json(ItemDetailsResponse {
-        icon_url,
-        stats_html,
-        weapon_type,
-        gems,
-    })
-}
 
 async fn post_topgear(Form(input): Form<SimulationInput>) -> Html<String> {
     let items_map = parse_simc_input(&input.input_content);
