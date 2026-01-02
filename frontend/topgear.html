@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Top Gear Selection</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 2rem;
+            padding-bottom: 140px;
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            margin: 0;
+        }
+
+        h1 {
+            text-align: center;
+            color: #ffcc00;
+            margin-bottom: 30px;
+        }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+
+        .slot-group {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .slot-group h3 {
+            border-bottom: 1px solid #444;
+            padding-bottom: 5px;
+            margin-top: 0;
+            color: #ddd;
+        }
+
+        .items-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .item-card {
+            position: relative;
+            background: #333;
+            padding: 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .item-card:hover {
+            background: #3c3c3c;
+        }
+
+        .item-card.selected {
+            border-color: #ffcc00;
+            background: #3d3d30;
+        }
+
+        .item-name {
+            font-weight: bold;
+            color: #a335ee;
+        }
+
+        .item-ilvl {
+            font-size: 0.9em;
+            color: #aaa;
+        }
+
+        .item-id {
+            font-size: 0.8em;
+            color: #666;
+        }
+
+        .item-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .item-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 4px;
+            background-color: #000;
+            border: 1px solid #444;
+        }
+
+        .item-info {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .tooltip {
+            visibility: hidden;
+            width: 200px;
+            background-color: #000000;
+            color: #fff;
+            text-align: left;
+            border-radius: 6px;
+            padding: 10px;
+            position: absolute;
+            z-index: 999;
+            bottom: 110%;
+            left: 50%;
+            margin-left: -100px;
+            opacity: 0;
+            transition: opacity 0.2s;
+            border: 1px solid #555;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+            pointer-events: none;
+        }
+
+        .item-card:hover .tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .stat-line {
+            color: #0f0;
+            font-size: 0.9em;
+            margin-bottom: 2px;
+        }
+
+        .weapon-tag {
+            font-size: 0.7em;
+            color: #888;
+            margin-left: auto;
+            border: 1px solid #444;
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        .enchant-line {
+            color: #00ff00;
+            font-size: 0.9em;
+            margin-top: 5px;
+            border-top: 1px solid #444;
+            padding-top: 5px;
+        }
+
+        .gems-container {
+            display: flex;
+            gap: 5px;
+            margin-top: 5px;
+        }
+
+        .gem-row {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.8em;
+            color: #fff;
+        }
+
+        .gem-icon {
+            width: 16px;
+            height: 16px;
+            border: 1px solid #333;
+            border-radius: 2px;
+        }
+
+        .sticky-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background-color: #252525;
+            border-top: 2px solid #444;
+            box-shadow: 0 -5px 15px rgba(0, 0, 0, 0.5);
+            padding: 15px 0;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        #comb-count {
+            font-size: 1.1rem;
+            font-weight: bold;
+            background: #1a1a1a;
+            padding: 5px 15px;
+            border-radius: 20px;
+            border: 1px solid #444;
+        }
+
+        .actions {
+            display: flex;
+            gap: 15px;
+        }
+
+        button {
+            padding: 12px 25px;
+            font-size: 16px;
+            cursor: pointer;
+            background: #444;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #555;
+        }
+
+        button.run-btn {
+            background-color: #ffcc00;
+            color: black;
+            font-weight: bold;
+        }
+
+        button.run-btn:hover {
+            background-color: #e6b800;
+        }
+
+        .limit-ok {
+            color: #4CAF50;
+        }
+
+        .limit-error {
+            color: #f44336;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Top Gear Selection</h1>
+
+    <div class="grid-container">
+        {{ITEMS_GRID}}
+    </div>
+
+    <div class="sticky-footer">
+        <div id="comb-count">Combinations: <span id="total-combs">0</span></div>
+
+        <div class="actions">
+            <button onclick="window.location.href='/'">Back</button>
+            <button onclick="runTopGear()" class="run-btn">Run Simulation</button>
+        </div>
+    </div>
+
+    <script>
+        const SIM_LIMIT = 50;
+
+        function getNormalizedSlot(element) {
+            let slot = element.getAttribute('data-slot');
+            if (slot.startsWith('finger')) return 'Finger';
+            if (slot.startsWith('trinket')) return 'Trinket';
+            if (slot === 'main_hand') return 'Main Hand';
+            if (slot === 'off_hand') return 'Off Hand';
+            return slot.charAt(0).toUpperCase() + slot.slice(1);
+        }
+
+        function combinations(n, k) {
+            if (n < k) return 0;
+            if (n == k) return 1;
+            let result = 1;
+            for (let i = 1; i <= k; i++) {
+                result = result * (n - i + 1) / i;
+            }
+            return Math.round(result);
+        }
+
+        function updateCombinations() {
+            const selectedItems = document.querySelectorAll('.item-card.selected');
+            const counts = {};
+            selectedItems.forEach(item => {
+                const slot = getNormalizedSlot(item);
+                counts[slot] = (counts[slot] || 0) + 1;
+            });
+
+            let totalCombinations = 1;
+            for (const [slot, count] of Object.entries(counts)) {
+                let ways = 1;
+                if (slot === "Finger" || slot === "Trinket") {
+                    if (count >= 2) ways = combinations(count, 2);
+                    else ways = 1;
+                } else {
+                    ways = count;
+                }
+                totalCombinations *= ways;
+            }
+
+            const el = document.getElementById('total-combs');
+            el.textContent = totalCombinations.toLocaleString();
+            const parent = document.getElementById('comb-count');
+            parent.className = "";
+            if (totalCombinations <= SIM_LIMIT) parent.classList.add('limit-ok');
+            else parent.classList.add('limit-error');
+        }
+
+        function toggleItem(element) {
+            element.classList.toggle('selected');
+            updateCombinations();
+
+            loadTooltip(element);
+        }
+
+        async function loadIcon(card) {
+            const itemId = card.getAttribute('data-id');
+            const img = card.querySelector('.item-icon');
+
+            try {
+                const res = await fetch(`/api/item_icon/${itemId}`);
+                const data = await res.json();
+                if (data.icon_url) {
+                    img.src = data.icon_url;
+                }
+            } catch (e) {
+                console.error("Icon load failed for " + itemId, e);
+            }
+        }
+
+        async function loadTooltip(card) {
+            if (card.dataset.tooltipLoaded === "true") return;
+            card.dataset.tooltipLoaded = "true";
+
+            const itemId = card.getAttribute('data-id');
+            const bonusIds = card.getAttribute('data-bonus') || "";
+            const enchantId = card.getAttribute('data-enchant') || "";
+            const gemIds = card.getAttribute('data-gems') || "";
+
+            const tooltip = card.querySelector('.tooltip');
+            const weaponTag = card.querySelector('.weapon-tag');
+
+            const params = new URLSearchParams({
+                bonus: bonusIds,
+                enchant: enchantId,
+                gems: gemIds
+            });
+
+            try {
+                const res = await fetch(`/api/item_tooltip/${itemId}?${params.toString()}`);
+                const data = await res.json();
+
+                let tooltipContent = "";
+
+                if (data.stats_html) {
+                    tooltipContent += `<div style='margin-bottom:5px'>${data.stats_html}</div>`;
+                } else {
+                    tooltipContent += "No stats data<br>";
+                }
+
+                if (data.enchant_name) {
+                    tooltipContent += `<div class="enchant-line">Enchant: ${data.enchant_name}</div>`;
+                }
+
+                if (data.gems && data.gems.length > 0) {
+                    tooltipContent += `<div class="gems-container">`;
+                    data.gems.forEach(gem => {
+                        tooltipContent += `
+                            <div class="gem-row">
+                                <img src="${gem.icon_url}" class="gem-icon">
+                                <span>${gem.name}</span>
+                            </div>`;
+                    });
+                    tooltipContent += `</div>`;
+                }
+
+                tooltip.innerHTML = tooltipContent;
+
+                if (data.weapon_type) {
+                    card.setAttribute('data-weapon-type', data.weapon_type);
+                    weaponTag.textContent = data.weapon_type;
+                    weaponTag.style.display = 'block';
+                }
+            } catch (err) {
+                console.error(err);
+                tooltip.innerHTML = "Error loading data";
+                card.dataset.tooltipLoaded = "false";
+            }
+        }
+
+        function runTopGear() {
+            const counterDiv = document.getElementById('comb-count');
+            if (counterDiv.classList.contains('limit-error')) {
+                alert(`Too many combinations! Please keep it under ${SIM_LIMIT}.`);
+                return;
+            }
+
+            const selectedItems = document.querySelectorAll('.item-card.selected');
+            const counts = {};
+            const selectedMainHands = [];
+
+            selectedItems.forEach(item => {
+                const slot = getNormalizedSlot(item);
+                counts[slot] = (counts[slot] || 0) + 1;
+
+                if (slot === 'Main Hand') {
+                    selectedMainHands.push({
+                        type: item.getAttribute('data-weapon-type') || '1H'
+                    });
+                }
+            });
+
+            const visibleSlots = document.querySelectorAll('.slot-group h3');
+            let errors = [];
+
+            visibleSlots.forEach(header => {
+                const slotName = header.textContent;
+                const count = counts[slotName] || 0;
+
+                if (slotName === 'Finger' || slotName === 'Trinket') {
+                    if (count < 2) errors.push(`${slotName}: Select at least 2 items.`);
+                }
+                else if (slotName === 'Main Hand') {
+                    if (count < 1) errors.push(`${slotName}: Select at least 1 item.`);
+
+                    const offHandCount = counts['Off Hand'] || 0;
+                    let has2H = selectedMainHands.some(w => w.type === '2H');
+                    let has1H = selectedMainHands.some(w => w.type === '1H');
+
+                    if (has1H && offHandCount === 0) {
+                        errors.push(`Main Hand: You selected a 1H weapon but no Off-Hand.`);
+                    } else if (has2H && !has1H && offHandCount > 0) {
+                        errors.push(`Off Hand: You selected a Off-hand with 2H weapon.`)
+                    }
+                }
+                else if (slotName === 'Off Hand') {
+                }
+                else {
+                    if (count < 1) errors.push(`${slotName}: Select at least 1 item.`);
+                }
+            });
+
+            if (errors.length > 0) {
+                alert("Please fix selection errors:\n\n" + errors.join("\n"));
+                return;
+            }
+
+            alert("Validation passed! Ready to sim!");
+        }
+
+
+        document.querySelectorAll('.item-card').forEach(card => loadIcon(card));
+
+        document.querySelectorAll('.item-card.selected').forEach(card => loadTooltip(card));
+
+        document.querySelectorAll('.item-card:not(.selected)').forEach(card => {
+            card.addEventListener('mouseenter', () => {
+                loadTooltip(card);
+            });
+        });
+
+        updateCombinations();
+    </script>
+</body>
+
+</html>

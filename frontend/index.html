@@ -4,6 +4,33 @@
 <head>
     <meta charset="UTF-8">
     <title>SimC Web Interface</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 2rem;
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+        }
+
+        /*button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+
+        button[value="quicksim"] {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+        }
+
+        button[value="topgear"] {
+            background-color: #008CBA;
+            color: white;
+            border: none;
+        }*/
+    </style>
 </head>
 
 <body>
@@ -11,7 +38,9 @@
     <form id="sim-form">
         <label for="input_content">SimC input:</label><br>
         <textarea id="input_content" name="input_content" rows="20" cols="80"></textarea><br>
-        <button type="submit">Run</button>
+        <br>
+        <button type="submit" value="quicksim">Quick Sim</button>
+        <button type="submit" value="topgear">Top Gear</button>
     </form>
 
     <p id="result"></p>
@@ -21,19 +50,38 @@
 
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
+
+            const action = e.submitter ? e.submitter.value : 'quicksim';
             const inputContent = document.getElementById('input_content').value;
 
             const data = new URLSearchParams();
             data.append('input_content', inputContent);
 
-            const response = await fetch('/run_simulation', {
-                method: 'POST',
-                body: data,
-                redirect: "follow"
-            });
+            let endpoint = '/run_simulation';
+            if (action === 'topgear') {
+                endpoint = '/topgear';
+            }
 
-            if (response.redirected) {
-                window.location.href = response.url;
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    body: data,
+                    redirect: "follow"
+                });
+
+                if (response.redirected) {
+                    window.location.href = response.url;
+                } else if (response.ok) {
+                    const htmlText = await response.text();
+                    document.open();
+                    document.write(htmlText);
+                    document.close();
+                } else {
+                    document.getElementById("result").innerText = "Error: " + response.statusText;
+                }
+            } catch (err) {
+                console.error(err);
+                document.getElementById("result").innerText = "Network Error";
             }
         });
     </script>

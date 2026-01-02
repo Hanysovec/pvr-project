@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Sim Result</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 2rem;
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+        }
+
+        .status-box {
+            margin-bottom: 20px;
+            font-weight: bold;
+            color: orange;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>QuickSim: <small>{{ID}}</small></h1>
+
+    <div id="status" class="status-box">Initializing...</div>
+    <div id="result"></div>
+
+    <script>
+        const simId = "{{ID}}";
+
+        async function checkStatus() {
+            try {
+                let statusRes = await fetch(`/quicksim/${simId}/status`);
+                let statusJson = await statusRes.json();
+
+                let statusDiv = document.getElementById("status");
+                statusDiv.textContent = "Status: " + statusJson.status;
+
+                if (statusJson.status === "Finished") {
+                    statusDiv.style.color = "green";
+                    fetchResult();
+                } else if (statusJson.status === "Failed") {
+                    statusDiv.style.color = "red";
+                    statusDiv.textContent += " (" + statusJson.error + ")";
+                } else {
+                    setTimeout(checkStatus, 2000);
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function fetchResult() {
+            let res = await fetch(`/quicksim/${simId}/result`);
+            if (res.ok) {
+                let json = await res.json();
+                if (json.dps) {
+                    document.getElementById("result").innerHTML = "<h2>DPS: " + Math.round(json.dps) + "</h2>";
+                }
+            }
+        }
+
+        checkStatus();
+    </script>
+</body>
+
+</html>
