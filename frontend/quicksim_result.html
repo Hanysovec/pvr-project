@@ -31,7 +31,7 @@
 
         async function checkStatus() {
             try {
-                let statusRes = await fetch(`/quicksim/${simId}/status`);
+                let statusRes = await fetch(`/api/status/${simId}`);
                 let statusJson = await statusRes.json();
 
                 let statusDiv = document.getElementById("status");
@@ -52,11 +52,25 @@
         }
 
         async function fetchResult() {
-            let res = await fetch(`/quicksim/${simId}/result`);
+            let res = await fetch(`/quicksim/${simId}/data`);
             if (res.ok) {
                 let json = await res.json();
+
+                let dps = 0;
+
                 if (json.dps) {
-                    document.getElementById("result").innerHTML = "<h2>DPS: " + Math.round(json.dps) + "</h2>";
+                    dps = json.dps;
+                }
+                else if (json.sim && json.sim.players) {
+                    try {
+                        dps = json.sim.players[0].collected_data.dps.mean;
+                    } catch (e) { }
+                }
+
+                if (dps > 0) {
+                    document.getElementById("result").innerHTML = "<h2>DPS: " + Math.round(dps).toLocaleString() + "</h2>";
+                } else {
+                    document.getElementById("result").innerHTML = "Error parsing result";
                 }
             }
         }

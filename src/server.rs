@@ -20,6 +20,7 @@ use tokio::sync::{Mutex, Semaphore, mpsc};
 use tower_http::services::ServeDir;
 use uuid::Uuid;
 use futures::future::join_all;
+use sqlx::{sqlite::SqlitePool, Pool, Sqlite};
 
 use crate::simulate;
 
@@ -39,6 +40,7 @@ struct AppState {
     http_client: reqwest::Client,
     blizzard_auth: Arc<Mutex<BlizzardAuth>>,
     item_icon_cache: Arc<DashMap<String, String>>, // OPTIMALIZATION to not reach Blizzard API limit so fast (100x/60secs)
+    db: Pool<Sqlite>,
 }
 enum JobType {
     QuickSim { base_simc: String },
@@ -50,7 +52,6 @@ enum JobType {
 struct SimulationJob {
     id: String,
     job_type: JobType,
-    output_file_path: String,
 }
 
 #[derive(Deserialize)]
@@ -182,9 +183,21 @@ const MAX_RUNNING_SIMS: usize = 2;
 
 pub async fn run_server() -> Result<(), String> {
     dotenvy::dotenv().ok();
+    let database_url = env::var("DATABASE_URL").unwrap_or("sqlite:sims.db?mode=rwc".to_string());
+    let db = SqlitePool::connect(&database_url).await.map_err(|e| e.to_string())?;
+
+    sqlx::query("
+        CREATE TABLE IF NOT EXISTS history (
+            id TEXT PRIMARY KEY,
+            sim_type TEXT NOT NULL,
+            dps REAL,
+            result_json TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    ").execute(&db).await.map_err(|e| e.to_string())?;
+
     let job_statuses = Arc::new(DashMap::new());
     let (tx, mut rx) = mpsc::channel::<SimulationJob>(100);
-
     let client_id = env::var("BLIZZARD_CLIENT_ID").expect("Error BLIZZARD_CLIENT_ID");
     let client_secret = env::var("BLIZZARD_CLIENT_SECRET").expect("Error BLIZZARD_CLIENT_SECRET");
     let icon_cache = Arc::new(DashMap::new());
@@ -199,7 +212,8 @@ pub async fn run_server() -> Result<(), String> {
             access_token: None,
             expires_at: Instant::now(),
         })),
-        item_icon_cache: icon_cache
+        item_icon_cache: icon_cache,
+        db: db.clone()
     };
 
     tokio::spawn(async move {
@@ -208,46 +222,66 @@ pub async fn run_server() -> Result<(), String> {
         while let Some(job) = rx.recv().await {
             let permit = semaphore.clone().acquire_owned().await.unwrap();
             let statuses = job_statuses.clone();
+            let db_conn = db.clone();
 
             tokio::spawn(async move {
                 statuses.insert(job.id.clone(), SimStatus::Processing);
                 println!("Starting job: {}", job.id);
                 let statuses_clone = statuses.clone();
                 let job_id = job.id.clone();
+                let output_path = format!("files/{}.json", job_id);
+                let output_path_clone = output_path.clone();
                 let result = tokio::task::spawn_blocking(move || {
                     match job.job_type {
                         JobType::QuickSim { base_simc } => {
                             let simc_path = format!("files/{}.simc", job_id);
                             fs::write(&simc_path, format!("{}\nmax_time=300\niterations=1000\n", base_simc)).unwrap();
-                            let res = simulate::run_simc(&simc_path, &job.output_file_path);
+                            let res = simulate::run_simc(&simc_path, &output_path_clone);
                             let _ = fs::remove_file(simc_path);
-                            res
+                            res.map(|_| "QuickSim".to_string())
                         },
                         JobType::TopGear { base_simc, selected_items } => {
                             process_topgear_batch(
                                 &job_id, 
                                 &base_simc, 
                                 selected_items, 
-                                &job.output_file_path, 
+                                &output_path_clone, 
                                 statuses_clone
-                            )
+                            ).map(|_| "TopGear".to_string())
                         }
                     }
                 }).await;
 
                 match result {
-                    Ok(Ok(_)) => { // Task OK, Sim OK
-                        statuses.insert(job.id.clone(), SimStatus::Finished);
-                        println!("Finished job: {}", job.id);
+                    Ok(Ok(sim_type)) => { // OK
+                        if let Ok(json_content) = fs::read_to_string(&output_path) {
+                            let dps = extract_dps_from_json(&json_content, &sim_type);
+                            let query_res = sqlx::query("INSERT INTO history (id, sim_type, dps, result_json) VALUES (?, ?, ?, ?)")
+                                .bind(&job.id)
+                                .bind(&sim_type)
+                                .bind(dps)
+                                .bind(&json_content)
+                                .execute(&db_conn)
+                                .await;
+
+                            if let Err(e) = query_res {
+                                eprintln!("DB Insert Error: {}", e);
+                                statuses.insert(job.id.clone(), SimStatus::Failed("Database write error".into()));
+                            } else {
+                                statuses.insert(job.id.clone(), SimStatus::Finished);
+                                println!("Finished & Saved job: {}", job.id);
+                                let _ = fs::remove_file(&output_path); 
+                            }
+                        } else {
+                            statuses.insert(job.id.clone(), SimStatus::Failed("Output file missing".into()));
+                        }
                     }
-                    Ok(Err(e)) => { // Task OK, Sim Error
+                    Ok(Err(e)) => { // SimC Error
                         let err_msg = format!("Simulation Error: {}", e);
-                        eprintln!("{}", err_msg);
                         statuses.insert(job.id.clone(), SimStatus::Failed(err_msg));
                     }
-                    Err(e) => { // Task Panic/Join Error
+                    Err(e) => { // Task Panic
                         let err_msg = format!("Task Execution Error: {}", e);
-                        eprintln!("{}", err_msg);
                         statuses.insert(job.id.clone(), SimStatus::Failed(err_msg));
                     }
                 }
@@ -257,17 +291,20 @@ pub async fn run_server() -> Result<(), String> {
     });
 
     let app = Router::new()
-        .route("/run_simulation", post(post_simulation))
+        // QUICKSIM
+        .route("/quicksim/run", post(post_simulation))
         .route("/quicksim/{id}", get(get_quicksim))
-        .route("/quicksim/{id}/status", get(get_quicksim_status))
-        .route("/quicksim/{id}/result", get(get_quicksim_result))
+        .route("/quicksim/{id}/data", get(get_result_data_from_db))
+        // TOPGEAR
         .route("/topgear", post(post_topgear))
+        .route("/topgear/run", post(post_run_topgear_batch))
+        .route("/topgear/{id}", get(get_topgear_result_page))
+        .route("/topgear/{id}/data", get(get_result_data_from_db))
+        // API
+        .route("/api/status/{id}", get(get_status_check))
+        .route("/api/wowhead_tooltip", get(get_wowhead_tooltip))
         .route("/api/item_icon/{id}", get(get_item_icon_only)) 
         .route("/api/item_tooltip/{id}", get(get_item_tooltip))
-        .route("/run_topgear_batch", post(post_run_topgear_batch))
-        .route("/topgear_result/{id}", get(get_topgear_result_page))
-        .route("/topgear/{id}/data", get(get_topgear_result_data))
-        .route("/api/wowhead_tooltip", get(get_wowhead_tooltip))
         .fallback_service(ServeDir::new("frontend"))
         .with_state(state);
 
@@ -291,8 +328,6 @@ async fn post_simulation(
     let id = Uuid::new_v4().to_string();
     let _ = fs::create_dir_all("files");
 
-    let output_file = format!("files/{}.json", id);
-
     state.job_statuses.insert(id.clone(), SimStatus::Queued);
 
     let job_type = JobType::QuickSim { 
@@ -302,7 +337,6 @@ async fn post_simulation(
     let job = SimulationJob {
         id: id.clone(),
         job_type,
-        output_file_path: output_file,
     };
 
     if let Err(e) = state.queue_sender.send(job).await {
@@ -316,7 +350,7 @@ async fn post_simulation(
 }
 
 async fn get_quicksim(Path(id): Path<String>) -> Html<String> {
-    match fs::read_to_string("frontend/result.html") {
+    match fs::read_to_string("frontend/quicksim_result.html") {
         Ok(template) => {
             let html = template.replace("{{ID}}", &id);
             Html(html)
@@ -325,39 +359,62 @@ async fn get_quicksim(Path(id): Path<String>) -> Html<String> {
     }
 }
 
-async fn get_quicksim_status(State(state): State<AppState>, Path(id): Path<String>) -> Json<Value> {
-    if let Some(status) = state.job_statuses.get(&id) {
-        match status.value() {
-            SimStatus::Queued => Json(serde_json::json!({ "status": "Queued" })),
-            SimStatus::Processing => Json(serde_json::json!({ "status": "Processing" })),
-            SimStatus::Finished => Json(serde_json::json!({ "status": "Finished" })),
-            SimStatus::Failed(e) => Json(serde_json::json!({ "status": "Failed", "error": e })),
-            
-            SimStatus::TopGearProcessing { current, total } => Json(serde_json::json!({ 
-                "status": "Processing",
-                "progress_current": current,
-                "progress_total": total
-            })),
-        }
+fn extract_dps_from_json(json_str: &str, sim_type: &str) -> Option<f64> {
+    let v: Value = serde_json::from_str(json_str).ok()?;
+    if sim_type == "TopGear" {
+        return v.get("results")?.get(0)?.get("dps")?.as_f64();
     } else {
-        Json(serde_json::json!({ "status": "Unknown" }))
+        return v.get("sim")?
+            .get("players")?.get(0)?
+            .get("collected_data")?.get("dps")?
+            .get("mean")?.as_f64();
     }
 }
 
-async fn get_quicksim_result(Path(id): Path<String>) -> Json<Value> {
-    let file = format!("files/{}.json", id);
-    if let Ok(data) = fs::read_to_string(&file) {
-        if let Ok(v) = serde_json::from_str::<Value>(&data) {
-            if let Some(dps) = v["sim"]["players"]
-                .as_array()
-                .and_then(|players| players.get(0))
-                .and_then(|player| player["collected_data"]["dps"]["mean"].as_f64())
-            {
-                return Json(serde_json::json!({ "dps": dps }));
-            }
+async fn get_status_check(
+    State(state): State<AppState>, 
+    Path(id): Path<String>
+) -> Json<Value> {
+    if let Some(status) = state.job_statuses.get(&id) {
+        match status.value() {
+            SimStatus::Queued => return Json(serde_json::json!({ "status": "Queued" })),
+            SimStatus::Processing => return Json(serde_json::json!({ "status": "Processing" })),
+            SimStatus::TopGearProcessing { current, total } => return Json(serde_json::json!({ 
+                "status": "Processing", "progress_current": current, "progress_total": total 
+            })),
+            SimStatus::Finished => return Json(serde_json::json!({ "status": "Finished" })),
+            SimStatus::Failed(e) => return Json(serde_json::json!({ "status": "Failed", "error": e })),
         }
     }
-    Json(serde_json::json!({ "error": "Data not found or invalid format" }))
+    let exists = sqlx::query("SELECT id FROM history WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+    if exists.is_some() {
+        return Json(serde_json::json!({ "status": "Finished" }));
+    }
+    Json(serde_json::json!({ "status": "Unknown" }))
+}
+
+async fn get_result_data_from_db(
+    State(state): State<AppState>,
+    Path(id): Path<String>
+) -> Json<Value> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT result_json FROM history WHERE id = ?")
+        .bind(&id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+
+    if let Some((json_str,)) = row {
+        if let Ok(val) = serde_json::from_str::<Value>(&json_str) {
+            return Json(val);
+        }
+    }
+
+    Json(serde_json::json!({ "error": "Result not found in database" }))
 }
 
 fn parse_simc_input(input: &str) -> BTreeMap<String, Vec<GearItem>> {
@@ -626,18 +683,6 @@ async fn get_topgear_result_page(Path(id): Path<String>) -> Html<String> {
     }
 }
 
-async fn get_topgear_result_data(Path(id): Path<String>) -> Json<Value> {
-    let file = format!("files/{}.json", id);
-    
-    if let Ok(data) = fs::read_to_string(&file) {
-        if let Ok(v) = serde_json::from_str::<Value>(&data) {
-            return Json(v);
-        }
-    }
-    
-    Json(serde_json::json!({ "error": "Data not found or invalid format" }))
-}
-
 async fn post_topgear(Form(input): Form<SimulationInput>) -> Html<String> {
     let items_map = parse_simc_input(&input.input_content);
     let mut grid_html = String::new();
@@ -807,12 +852,9 @@ fn process_topgear_batch(
     results.sort_by(|a, b| b.dps.partial_cmp(&a.dps).unwrap());
 
     let final_json = TopGearFinalResult { results };
-    
     let json_str = serde_json::to_string(&final_json)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        
     fs::write(output_path, json_str)?;
-
     Ok(())
 }
 
@@ -831,14 +873,13 @@ async fn post_run_topgear_batch(
             base_simc: payload.base_simc,
             selected_items: payload.selected_items 
         },
-        output_file_path: format!("files/{}.json", id),
     };
 
     if let Err(e) = state.queue_sender.send(job).await {
         eprintln!("Queue error: {}", e);
     }
 
-    Redirect::to(&format!("/topgear_result/{}", id))
+    Redirect::to(&format!("/topgear/{}", id))
 }
 
 async fn get_wowhead_tooltip(

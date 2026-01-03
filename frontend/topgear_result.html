@@ -234,8 +234,7 @@
     </div>
 
     <div id="result-container">
-        <button onclick="window.location.href='/topgear'" style="margin-bottom:15px; padding:10px;">Back to
-            Selection</button>
+        <button onclick="window.location.href='..'" style="margin-bottom:15px; padding:10px;">Back</button>
         <table>
             <thead>
                 <tr>
@@ -259,7 +258,7 @@
 
         async function checkStatus() {
             try {
-                let res = await fetch(`/quicksim/${simId}/status`);
+                let res = await fetch(`/api/status/${simId}`);
                 let json = await res.json();
 
                 if (json.status === "Processing" && json.progress_total) {
