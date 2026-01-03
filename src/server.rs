@@ -5,11 +5,12 @@ use axum::{
     routing::{get, post},
 };
 use dashmap::DashMap;
+use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     env, fs,
     net::SocketAddr,
     sync::Arc,
@@ -26,6 +27,7 @@ use crate::simulate;
 enum SimStatus {
     Queued,
     Processing,
+    TopGearProcessing { current: usize, total: usize }, 
     Finished,
     Failed(String),
 }
@@ -37,10 +39,16 @@ struct AppState {
     http_client: reqwest::Client,
     blizzard_auth: Arc<Mutex<BlizzardAuth>>,
 }
-
+enum JobType {
+    QuickSim { base_simc: String },
+    TopGear { 
+        base_simc: String, 
+        selected_items: HashMap<String, Vec<String>> 
+    },
+}
 struct SimulationJob {
     id: String,
-    simc_file_path: String,
+    job_type: JobType,
     output_file_path: String,
 }
 
@@ -143,6 +151,23 @@ struct ItemDetailsQuery {
     gems: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct TopGearRunRequest {
+    base_simc: String,
+    selected_items: HashMap<String, Vec<String>>, 
+}
+
+#[derive(Serialize, Clone)]
+struct TopGearResultEntry {
+    dps: f64,
+    items: Vec<String>, 
+}
+
+#[derive(Serialize)]
+struct TopGearFinalResult {
+    results: Vec<TopGearResultEntry>,
+}
+
 const MAX_RUNNING_SIMS: usize = 2;
 
 pub async fn run_server() -> Result<(), String> {
@@ -175,33 +200,46 @@ pub async fn run_server() -> Result<(), String> {
 
             tokio::spawn(async move {
                 statuses.insert(job.id.clone(), SimStatus::Processing);
-                println!("Starting simulation: {}", job.id);
-
-                let simc_path = job.simc_file_path.clone();
-                let output_path = job.output_file_path.clone();
-
+                println!("Starting job: {}", job.id);
+                let statuses_clone = statuses.clone();
+                let job_id = job.id.clone();
                 let result = tokio::task::spawn_blocking(move || {
-                    simulate::run_simc(&simc_path, &output_path)
-                })
-                .await;
+                    match job.job_type {
+                        JobType::QuickSim { base_simc } => {
+                            let simc_path = format!("files/{}.simc", job_id);
+                            fs::write(&simc_path, format!("{}\nmax_time=300\niterations=1000\n", base_simc)).unwrap();
+                            let res = simulate::run_simc(&simc_path, &job.output_file_path);
+                            let _ = fs::remove_file(simc_path);
+                            res
+                        },
+                        JobType::TopGear { base_simc, selected_items } => {
+                            process_topgear_batch(
+                                &job_id, 
+                                &base_simc, 
+                                selected_items, 
+                                &job.output_file_path, 
+                                statuses_clone
+                            )
+                        }
+                    }
+                }).await;
 
                 match result {
-                    Ok(Ok(_)) => {
+                    Ok(Ok(_)) => { // Task OK, Sim OK
                         statuses.insert(job.id.clone(), SimStatus::Finished);
-                        println!("Finished simulation: {}", job.id);
+                        println!("Finished job: {}", job.id);
                     }
-                    Ok(Err(e)) => {
+                    Ok(Err(e)) => { // Task OK, Sim Error
                         let err_msg = format!("Simulation Error: {}", e);
                         eprintln!("{}", err_msg);
                         statuses.insert(job.id.clone(), SimStatus::Failed(err_msg));
                     }
-                    Err(e) => {
-                        let err_msg = format!("Task Join Error: {}", e);
+                    Err(e) => { // Task Panic/Join Error
+                        let err_msg = format!("Task Execution Error: {}", e);
                         eprintln!("{}", err_msg);
                         statuses.insert(job.id.clone(), SimStatus::Failed(err_msg));
                     }
                 }
-                let _ = fs::remove_file(&job.simc_file_path);
                 drop(permit);
             });
         }
@@ -215,6 +253,9 @@ pub async fn run_server() -> Result<(), String> {
         .route("/topgear", post(post_topgear))
         .route("/api/item_icon/{id}", get(get_item_icon_only)) 
         .route("/api/item_tooltip/{id}", get(get_item_tooltip))
+        .route("/run_topgear_batch", post(post_run_topgear_batch))
+        .route("/topgear_result/{id}", get(get_topgear_result_page))
+        .route("/topgear/{id}/data", get(get_topgear_result_data))
         .fallback_service(ServeDir::new("frontend"))
         .with_state(state);
 
@@ -238,22 +279,17 @@ async fn post_simulation(
     let id = Uuid::new_v4().to_string();
     let _ = fs::create_dir_all("files");
 
-    let simc_file = format!("files/{}.simc", id);
     let output_file = format!("files/{}.json", id);
-
-    if let Err(e) = fs::write(
-        &simc_file,
-        format!("{}\nmax_time=300\niterations=1000\n", input.input_content),
-    ) {
-        eprintln!("Error while writing: {}", e);
-        return Redirect::to("/error");
-    }
 
     state.job_statuses.insert(id.clone(), SimStatus::Queued);
 
+    let job_type = JobType::QuickSim { 
+        base_simc: input.input_content 
+    };
+    
     let job = SimulationJob {
         id: id.clone(),
-        simc_file_path: simc_file,
+        job_type,
         output_file_path: output_file,
     };
 
@@ -284,6 +320,12 @@ async fn get_quicksim_status(State(state): State<AppState>, Path(id): Path<Strin
             SimStatus::Processing => Json(serde_json::json!({ "status": "Processing" })),
             SimStatus::Finished => Json(serde_json::json!({ "status": "Finished" })),
             SimStatus::Failed(e) => Json(serde_json::json!({ "status": "Failed", "error": e })),
+            
+            SimStatus::TopGearProcessing { current, total } => Json(serde_json::json!({ 
+                "status": "Processing",
+                "progress_current": current,
+                "progress_total": total
+            })),
         }
     } else {
         Json(serde_json::json!({ "status": "Unknown" }))
@@ -559,6 +601,27 @@ async fn get_item_tooltip(
     })
 }
 
+async fn get_topgear_result_page(Path(id): Path<String>) -> Html<String> {
+    match fs::read_to_string("frontend/topgear_result.html") {
+        Ok(template) => {
+            let html = template.replace("{{ID}}", &id);
+            Html(html)
+        }
+        Err(_) => Html("<h1>Error: Template not found</h1>".to_string()),
+    }
+}
+
+async fn get_topgear_result_data(Path(id): Path<String>) -> Json<Value> {
+    let file = format!("files/{}.json", id);
+    
+    if let Ok(data) = fs::read_to_string(&file) {
+        if let Ok(v) = serde_json::from_str::<Value>(&data) {
+            return Json(v);
+        }
+    }
+    
+    Json(serde_json::json!({ "error": "Data not found or invalid format" }))
+}
 
 async fn post_topgear(Form(input): Form<SimulationInput>) -> Html<String> {
     let items_map = parse_simc_input(&input.input_content);
@@ -568,6 +631,7 @@ async fn post_topgear(Form(input): Form<SimulationInput>) -> Html<String> {
         "Hands", "Waist", "Legs", "Feet", "Finger", "Trinket", 
         "Main Hand", "Off Hand"
     ];
+    
 
     for key in sorted_keys {
         if let Some(items) = items_map.get(key) {
@@ -575,21 +639,22 @@ async fn post_topgear(Form(input): Form<SimulationInput>) -> Html<String> {
             
             for item in items {
                 let selected_class = if item.is_equipped { "selected" } else { "" };
-                
+                let raw_line_attr = item.raw_line.replace("\"", "&quot;");
                 let gems_attr = item.gem_ids.join(",");
 
                 grid_html.push_str(&format!(
                     r#"
-                    <div class="item-card {}" 
-                         data-id="{}" 
-                         data-slot="{}" 
-                         data-bonus="{}" 
-                         data-gems="{}" 
+                    <div class="item-card {}"
+                         data-id="{}"
+                         data-slot="{}"
+                         data-bonus="{}"
+                         data-gems="{}"
+                         data-simc-line="{}"
                          onclick="toggleItem(this)">
                          
                         <div class="item-header">
-                            <img class="item-icon" 
-                                 src="https://render.worldofwarcraft.com/eu/icons/56/inv_misc_questionmark.jpg" 
+                            <img class="item-icon"
+                                 src="https://render.worldofwarcraft.com/eu/icons/56/inv_misc_questionmark.jpg"
                                  alt="" 
                                  data-id="{}">
                             <div class="item-info">
@@ -602,7 +667,7 @@ async fn post_topgear(Form(input): Form<SimulationInput>) -> Html<String> {
                         </div>
                         
                         <div class="tooltip">Loading stats...</div>
-                        <div class="item-id" style="display:none">ID: {}</div> 
+                        <div class="item-id" style="display:none">ID: {}</div>
                     </div>
                     "#,
                     selected_class, 
@@ -610,6 +675,7 @@ async fn post_topgear(Form(input): Form<SimulationInput>) -> Html<String> {
                     item.slot,
                     item.bonus_ids,
                     gems_attr,
+                    raw_line_attr,
                     item.id,
                     item.name, 
                     item.ilvl, 
@@ -622,6 +688,140 @@ async fn post_topgear(Form(input): Form<SimulationInput>) -> Html<String> {
 
     let template = fs::read_to_string("frontend/topgear.html")
         .unwrap_or_else(|_| "<h1>Error: Template missing</h1>".to_string());
+    let html_with_grid = template.replace("{{ITEMS_GRID}}", &grid_html);
+    let final_html = html_with_grid.replace(
+        "// {{BASE_SIMC_INJECT}}", 
+        &format!("const BASE_SIMC = `{}`;", input.input_content)
+    );
+    Html(final_html)
+}
+
+fn generate_combinations(items_map: HashMap<String, Vec<String>>) -> Vec<Vec<String>> {
+    let mut all_slots_variants: Vec<Vec<Vec<String>>> = Vec::new();
+
+    for (slot_name, lines) in items_map {
+        let mut variants_for_this_slot: Vec<Vec<String>> = Vec::new();
+
+        if slot_name == "Finger" || slot_name == "Trinket" {
+            if lines.len() >= 2 {
+                for pair in lines.into_iter().combinations(2) {
+                    variants_for_this_slot.push(pair);
+                }
+            } else if lines.len() == 1 {
+                 variants_for_this_slot.push(vec![lines[0].clone()]);
+            }
+        } else {
+            for item in lines {
+                variants_for_this_slot.push(vec![item]);
+            }
+        }
+        
+        if !variants_for_this_slot.is_empty() {
+            all_slots_variants.push(variants_for_this_slot);
+        }
+    }
+    // 2. Cartesian Product
+    // all_slots_variants = [  
+    //    [ [Head1], [Head2] ], 
+    //    [ [R1, R2], [R1, R3] ] 
+    // ]
+    let prod = all_slots_variants.into_iter().multi_cartesian_product();
     
-    Html(template.replace("{{ITEMS_GRID}}", &grid_html))
+    // 1. [ [Head1], [R1, R2] ]
+    // 2. [ [Head1], [R1, R3] ]
+    // ...
+    let mut result = Vec::new();
+    for combination in prod {
+        let flat: Vec<String> = combination.into_iter().flatten().collect();
+        result.push(flat);
+    }
+    result
+}
+
+fn process_topgear_batch(
+    id: &str, 
+    base_simc: &str, 
+    items: HashMap<String, Vec<String>>,
+    output_path: &str,
+    job_statuses: Arc<DashMap<String, SimStatus>>
+) -> std::io::Result<()> {
+    
+    let combinations = generate_combinations(items);
+    let total = combinations.len();
+    println!("TopGear {}: Generated {} combinations", id, total);
+
+    job_statuses.insert(id.to_string(), SimStatus::TopGearProcessing { current: 0, total });
+
+    let mut results = Vec::new();
+
+    for (i, combination) in combinations.iter().enumerate() {
+        job_statuses.insert(id.to_string(), SimStatus::TopGearProcessing { current: i + 1, total });
+
+        let mut content = base_simc.to_string();
+        content.push_str("\n\n# --- Top Gear Combination ---\n");
+        for line in combination {
+            content.push_str(line);
+            content.push('\n');
+        }
+        content.push_str("max_time=300\niterations=1000\n");
+
+        let temp_simc_path = format!("files/{}_{}.simc", id, i);
+        let temp_json_path = format!("files/{}_{}.json", id, i);
+
+        if let Err(e) = fs::write(&temp_simc_path, &content) { 
+            eprintln!("Write err: {}", e); 
+            continue; 
+        }
+        
+        if let Ok(_) = simulate::run_simc(&temp_simc_path, &temp_json_path) {
+             if let Ok(json_str) = fs::read_to_string(&temp_json_path) {
+                if let Ok(v) = serde_json::from_str::<Value>(&json_str) {
+                    if let Some(dps) = v["sim"]["players"][0]["collected_data"]["dps"]["mean"].as_f64() {
+                        results.push(TopGearResultEntry {
+                            dps,
+                            items: combination.clone(),
+                        });
+                    }
+                }
+            }
+            let _ = fs::remove_file(temp_json_path);
+        }
+        let _ = fs::remove_file(temp_simc_path);
+    }
+
+    results.sort_by(|a, b| b.dps.partial_cmp(&a.dps).unwrap());
+
+    let final_json = TopGearFinalResult { results };
+    
+    let json_str = serde_json::to_string(&final_json)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        
+    fs::write(output_path, json_str)?;
+
+    Ok(())
+}
+
+async fn post_run_topgear_batch(
+    State(state): State<AppState>,
+    Json(payload): Json<TopGearRunRequest>,
+) -> Redirect {
+    let id = Uuid::new_v4().to_string();
+    let _ = fs::create_dir_all("files");
+    
+    state.job_statuses.insert(id.clone(), SimStatus::Queued);
+
+    let job = SimulationJob {
+        id: id.clone(),
+        job_type: JobType::TopGear { 
+            base_simc: payload.base_simc,
+            selected_items: payload.selected_items 
+        },
+        output_file_path: format!("files/{}.json", id),
+    };
+
+    if let Err(e) = state.queue_sender.send(job).await {
+        eprintln!("Queue error: {}", e);
+    }
+
+    Redirect::to(&format!("/topgear_result/{}", id))
 }

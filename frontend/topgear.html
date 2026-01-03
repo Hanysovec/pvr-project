@@ -254,6 +254,7 @@
     </div>
 
     <script>
+        // {{BASE_SIMC_INJECT}}
         const SIM_LIMIT = 50;
 
         function getNormalizedSlot(element) {
@@ -442,7 +443,34 @@
                 return;
             }
 
-            alert("Validation passed! Ready to sim!");
+            const selectedItemsMap = {};
+
+            document.querySelectorAll('.item-card.selected').forEach(card => {
+                const slot = getNormalizedSlot(card);
+                const rawLine = card.getAttribute('data-simc-line');
+
+                if (!selectedItemsMap[slot]) {
+                    selectedItemsMap[slot] = [];
+                }
+                selectedItemsMap[slot].push(rawLine);
+            });
+
+            fetch('/run_topgear_batch', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    base_simc: BASE_SIMC,
+                    selected_items: selectedItemsMap
+                })
+            })
+                .then(response => {
+                    if (response.redirected) {
+                        window.location.href = response.url;
+                    }
+                })
+                .catch(err => console.error(err));
         }
 
 
