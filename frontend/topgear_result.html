@@ -105,13 +105,127 @@
             background-color: #3d3d30;
             border-left: 4px solid #ffcc00;
         }
+
+        .items-flex {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .item-icon-wrapper {
+            position: relative;
+            width: 40px;
+            height: 40px;
+            display: inline-block;
+        }
+
+        .item-icon-img {
+            width: 100%;
+            height: 100%;
+            border-radius: 4px;
+            border: 1px solid #444;
+            background-color: #111;
+        }
+
+        #wowhead-tooltip-container {
+            position: fixed;
+            display: none;
+            z-index: 10000;
+
+            background-color: #050505;
+            border: 1px solid #777;
+            border-radius: 4px;
+            padding: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.8);
+
+            color: #ffffff;
+            font-size: 12px;
+            line-height: 1.4;
+            text-align: left;
+            max-width: 320px;
+            pointer-events: none;
+        }
+
+        #wowhead-tooltip-container table {
+            width: 100%;
+            background: transparent;
+            border: none;
+            border-collapse: collapse;
+        }
+
+        #wowhead-tooltip-container td,
+        #wowhead-tooltip-container th {
+            border: none;
+            padding: 0;
+            background: transparent;
+            color: white;
+            text-align: left;
+        }
+
+        .q {
+            color: #ffd100;
+        }
+
+        .q0 {
+            color: #9d9d9d;
+        }
+
+        .q1 {
+            color: #ffffff;
+        }
+
+        .q2 {
+            color: #1eff00;
+        }
+
+        .q3 {
+            color: #0070dd;
+        }
+
+        .q4 {
+            color: #a335ee;
+        }
+
+        .q5 {
+            color: #ff8000;
+        }
+
+        #wowhead-tooltip-container a {
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .moneygold {
+            color: gold;
+        }
+
+        .moneysilver {
+            color: silver;
+        }
+
+        .moneycopper {
+            color: #cd7f32;
+        }
+
+        #wowhead-tooltip-container span[class*="socket-"] {
+            display: block !important;
+            width: auto !important;
+            height: auto !important;
+            min-height: 16px;
+            padding-left: 20px !important;
+            background-repeat: no-repeat !important;
+            background-position: left center !important;
+            background-size: 16px 16px !important;
+            margin-top: 2px;
+            color: #ddd;
+        }
     </style>
 </head>
 
 <body>
 
     <h1>Top Gear Simulation: <small>{{ID}}</small></h1>
-
+    <div id="wowhead-tooltip-container"></div>
     <div id="status-box" class="status-container">
         <div id="status-text" class="status-text">Initializing...</div>
         <div class="progress-track">
@@ -140,6 +254,8 @@
         const resultContainer = document.getElementById('result-container');
         const statusText = document.getElementById('status-text');
         const progressBar = document.getElementById('progress-bar');
+        const tooltipBox = document.getElementById('wowhead-tooltip-container');
+        const iconCache = {};
 
         async function checkStatus() {
             try {
@@ -203,29 +319,111 @@
 
                 const tdDps = document.createElement('td');
                 const diff = row.dps - maxDps;
-                const diffText = diff === 0 ? "" : Math.round(diff);
+                const diffText = diff === 0 ? "" : Math.round(diff).toLocaleString();
                 const diffClass = diff < 0 ? "negative" : "";
-
                 tdDps.innerHTML = `
                     <div class="dps-val">${Math.round(row.dps).toLocaleString()}</div>
                     <div class="dps-diff ${diffClass}">${diffText}</div>
                 `;
 
                 const tdItems = document.createElement('td');
-                tdItems.className = "item-list";
+                const itemsDiv = document.createElement('div');
+                itemsDiv.className = 'items-flex';
 
-                let itemsHtml = "";
                 row.items.forEach(line => {
-                    let displayText = line.substring(0, 50) + "...";
-                    itemsHtml += `<div class="item-entry">${line}</div>`;
-                });
-                tdItems.innerHTML = itemsHtml;
+                    const parsed = parseSimcLine(line);
 
+                    if (parsed && parsed.id) {
+                        const wrapper = document.createElement('div');
+                        wrapper.className = 'item-icon-wrapper';
+
+                        const img = document.createElement('img');
+                        img.className = 'item-icon-img';
+                        img.src = "https://render.worldofwarcraft.com/eu/icons/56/inv_misc_questionmark.jpg";
+                        // OPTIMALIZATION to let server breathe
+                        if (iconCache[parsed.id]) {
+                            img.src = iconCache[parsed.id];
+                        } else {
+                            img.src = "https://render.worldofwarcraft.com/eu/icons/56/inv_misc_questionmark.jpg";
+                            fetch(`/api/item_icon/${parsed.id}`)
+                                .then(r => r.json())
+                                .then(d => {
+                                    if (d.icon_url) {
+                                        img.src = d.icon_url;
+                                        iconCache[parsed.id] = d.icon_url;
+                                    }
+                                });
+                        }
+
+                        wrapper.addEventListener('mouseenter', (e) => showTooltip(e, parsed));
+                        wrapper.addEventListener('mousemove', moveTooltip);
+                        wrapper.addEventListener('mouseleave', hideTooltip);
+
+                        wrapper.appendChild(img);
+                        itemsDiv.appendChild(wrapper);
+                    }
+                });
+
+                tdItems.appendChild(itemsDiv);
                 tr.appendChild(tdRank);
                 tr.appendChild(tdDps);
                 tr.appendChild(tdItems);
                 tbody.appendChild(tr);
             });
+        }
+
+        function parseSimcLine(line) {
+            const idMatch = line.match(/id=(\d+)/);
+            const bonusMatch = line.match(/bonus_id=([0-9/]+)/);
+            const enchantMatch = line.match(/enchant_id=(\d+)/);
+            const gemMatch = line.match(/gem_id=([0-9/]+)/);
+
+            if (!idMatch) return null;
+
+            return {
+                id: idMatch[1],
+                bonus: bonusMatch ? bonusMatch[1] : null,
+                enchant: enchantMatch ? enchantMatch[1] : null,
+                gems: gemMatch ? gemMatch[1] : null
+            };
+        }
+
+        async function showTooltip(e, data) {
+            tooltipBox.innerHTML = "Loading...";
+            tooltipBox.style.display = 'block';
+            moveTooltip(e);
+
+            const params = new URLSearchParams();
+            params.append('item_id', data.id);
+            if (data.bonus) params.append('bonus', data.bonus);
+            if (data.enchant) params.append('enchant', data.enchant);
+            if (data.gems) params.append('gems', data.gems);
+
+            try {
+                const res = await fetch(`/api/wowhead_tooltip?${params.toString()}`);
+                const json = await res.json();
+
+                if (json.tooltip) {
+                    tooltipBox.innerHTML = json.tooltip;
+                } else {
+                    tooltipBox.innerHTML = "Tooltip not found";
+                }
+            } catch (err) {
+                console.error(err);
+                tooltipBox.innerHTML = "Error loading tooltip";
+            }
+        }
+
+        function moveTooltip(e) {
+            const x = e.clientX + 15;
+            const y = e.clientY + 15;
+
+            tooltipBox.style.left = x + 'px';
+            tooltipBox.style.top = y + 'px';
+        }
+
+        function hideTooltip() {
+            tooltipBox.style.display = 'none';
         }
 
         checkStatus();

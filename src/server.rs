@@ -38,6 +38,7 @@ struct AppState {
     job_statuses: Arc<DashMap<String, SimStatus>>,
     http_client: reqwest::Client,
     blizzard_auth: Arc<Mutex<BlizzardAuth>>,
+    item_icon_cache: Arc<DashMap<String, String>>, // OPTIMALIZATION to not reach Blizzard API limit so fast (100x/60secs)
 }
 enum JobType {
     QuickSim { base_simc: String },
@@ -168,6 +169,15 @@ struct TopGearFinalResult {
     results: Vec<TopGearResultEntry>,
 }
 
+#[derive(Deserialize)]
+struct WowheadQuery {
+    item_id: String,
+    bonus: Option<String>,
+    enchant: Option<String>,
+    gems: Option<String>,
+    ilvl: Option<String>,
+}
+
 const MAX_RUNNING_SIMS: usize = 2;
 
 pub async fn run_server() -> Result<(), String> {
@@ -176,8 +186,8 @@ pub async fn run_server() -> Result<(), String> {
     let (tx, mut rx) = mpsc::channel::<SimulationJob>(100);
 
     let client_id = env::var("BLIZZARD_CLIENT_ID").expect("Error BLIZZARD_CLIENT_ID");
-
     let client_secret = env::var("BLIZZARD_CLIENT_SECRET").expect("Error BLIZZARD_CLIENT_SECRET");
+    let icon_cache = Arc::new(DashMap::new());
 
     let state = AppState {
         queue_sender: tx,
@@ -189,6 +199,7 @@ pub async fn run_server() -> Result<(), String> {
             access_token: None,
             expires_at: Instant::now(),
         })),
+        item_icon_cache: icon_cache
     };
 
     tokio::spawn(async move {
@@ -256,6 +267,7 @@ pub async fn run_server() -> Result<(), String> {
         .route("/run_topgear_batch", post(post_run_topgear_batch))
         .route("/topgear_result/{id}", get(get_topgear_result_page))
         .route("/topgear/{id}/data", get(get_topgear_result_data))
+        .route("/api/wowhead_tooltip", get(get_wowhead_tooltip))
         .fallback_service(ServeDir::new("frontend"))
         .with_state(state);
 
@@ -506,6 +518,9 @@ async fn get_item_icon_only(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Json<ItemIconResponse> {
+    if let Some(cached_url) = state.item_icon_cache.get(&id) {
+        return Json(ItemIconResponse { icon_url: cached_url.value().clone() });
+    }
     let token = match get_blizzard_token(&state).await {
         Ok(t) => t,
         Err(_) => return Json(ItemIconResponse { icon_url: "".into() }),
@@ -523,7 +538,7 @@ async fn get_item_icon_only(
             }
         }
     }
-
+    state.item_icon_cache.insert(id, icon_url.clone());
     Json(ItemIconResponse { icon_url })
 }
 
@@ -824,4 +839,37 @@ async fn post_run_topgear_batch(
     }
 
     Redirect::to(&format!("/topgear_result/{}", id))
+}
+
+async fn get_wowhead_tooltip(
+    State(state): State<AppState>,
+    Query(params): Query<WowheadQuery>,
+) -> Json<Value> {
+    // https://nether.wowhead.com/tooltip/item/
+    let mut url = format!("https://nether.wowhead.com/tooltip/item/{}?dataEnv=1&locale=0", params.item_id);
+
+    if let Some(ench) = params.enchant {
+        url.push_str(&format!("&ench={}", ench));
+    }
+    if let Some(bonus) = params.bonus {
+        let wowhead_bonus = bonus.replace("/", ":");
+        url.push_str(&format!("&bonus={}", wowhead_bonus));
+    }
+    if let Some(gems) = params.gems {
+        let wowhead_gems = gems.replace("/", ":");
+        url.push_str(&format!("&gems={}", wowhead_gems));
+    }
+    if let Some(ilvl) = params.ilvl {
+        url.push_str(&format!("&ilvl={}", ilvl));
+    }
+    match state.http_client.get(&url).send().await {
+        Ok(res) => {
+            if let Ok(json) = res.json::<Value>().await {
+                return Json(json);
+            }
+        },
+        Err(e) => eprintln!("Wowhead proxy error: {}", e),
+    }
+
+    Json(serde_json::json!({ "error": "Failed to fetch tooltip" }))
 }
