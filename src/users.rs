@@ -27,7 +27,7 @@ pub enum UserRole {
 }
 
 #[derive(sqlx::FromRow, Serialize, Debug)]
-pub struct User {
+pub struct _User {
     pub id: i64,
     pub username: String,
     #[serde(skip)]
@@ -111,7 +111,7 @@ pub async fn logout(session: Session) -> Redirect {
 pub async fn get_user_profile(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    session: Session,
+    _session: Session,
 ) -> Html<String> {
     let user_info: Option<(String,)> = sqlx::query_as("SELECT role FROM users WHERE username = ?")
         .bind(&username)
