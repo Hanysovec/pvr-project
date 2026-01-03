@@ -1,5 +1,6 @@
 mod server;
 mod simulate;
+mod users;
 
 #[tokio::main]
 async fn main() {

@@ -9,6 +9,8 @@ use itertools::Itertools;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tower_sessions::{Expiry, Session, SessionManagerLayer, cookie::time::Duration as SessionDuration};
+use tower_sessions_sqlx_store::SqliteStore;
 use std::{
     collections::{BTreeMap, HashMap},
     env, fs,
@@ -22,7 +24,7 @@ use uuid::Uuid;
 use futures::future::join_all;
 use sqlx::{sqlite::SqlitePool, Pool, Sqlite};
 
-use crate::simulate;
+use crate::{simulate, users};
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 enum SimStatus {
@@ -34,13 +36,13 @@ enum SimStatus {
 }
 
 #[derive(Clone)]
-struct AppState {
+pub struct AppState {
     queue_sender: mpsc::Sender<SimulationJob>,
     job_statuses: Arc<DashMap<String, SimStatus>>,
     http_client: reqwest::Client,
     blizzard_auth: Arc<Mutex<BlizzardAuth>>,
     item_icon_cache: Arc<DashMap<String, String>>, // OPTIMALIZATION to not reach Blizzard API limit so fast (100x/60secs)
-    db: Pool<Sqlite>,
+    pub db: Pool<Sqlite>,
 }
 enum JobType {
     QuickSim { base_simc: String },
@@ -187,6 +189,16 @@ pub async fn run_server() -> Result<(), String> {
     let db = SqlitePool::connect(&database_url).await.map_err(|e| e.to_string())?;
 
     sqlx::query("
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            role TEXT NOT NULL DEFAULT 'User' CHECK(role IN ('User', 'Premium', 'Admin'))
+        );
+    ").execute(&db).await.map_err(|e| format!("DB Error Users: {}", e))?;
+
+    sqlx::query("
         CREATE TABLE IF NOT EXISTS history (
             id TEXT PRIMARY KEY,
             sim_type TEXT NOT NULL,
@@ -201,6 +213,13 @@ pub async fn run_server() -> Result<(), String> {
     let client_id = env::var("BLIZZARD_CLIENT_ID").expect("Error BLIZZARD_CLIENT_ID");
     let client_secret = env::var("BLIZZARD_CLIENT_SECRET").expect("Error BLIZZARD_CLIENT_SECRET");
     let icon_cache = Arc::new(DashMap::new());
+
+    let session_store = SqliteStore::new(db.clone());
+    session_store.migrate().await.map_err(|e| e.to_string())?;
+    
+    let session_layer = SessionManagerLayer::new(session_store)
+        .with_secure(false)
+        .with_expiry(Expiry::OnInactivity(SessionDuration::seconds(3600)));
 
     let state = AppState {
         queue_sender: tx,
@@ -291,6 +310,7 @@ pub async fn run_server() -> Result<(), String> {
     });
 
     let app = Router::new()
+        .route("/", get(get_index))
         // QUICKSIM
         .route("/quicksim/run", post(post_simulation))
         .route("/quicksim/{id}", get(get_quicksim))
@@ -305,7 +325,13 @@ pub async fn run_server() -> Result<(), String> {
         .route("/api/wowhead_tooltip", get(get_wowhead_tooltip))
         .route("/api/item_icon/{id}", get(get_item_icon_only)) 
         .route("/api/item_tooltip/{id}", get(get_item_tooltip))
+        // USER
+        .route("/user/register", get(users::register_page).post(users::register))
+        .route("/user/login", post(users::login))
+        .route("/user/logout", get(users::logout))
+        .route("/user/profile/{name}", get(users::get_user_profile))
         .fallback_service(ServeDir::new("frontend"))
+        .layer(session_layer)
         .with_state(state);
 
     // let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
@@ -319,6 +345,50 @@ pub async fn run_server() -> Result<(), String> {
     axum::serve(listener, app.into_make_service())
         .await
         .map_err(|e| format!("Error server: {}", e))
+}
+
+async fn get_index(session: Session) -> Html<String> {
+    let html_content = fs::read_to_string("frontend/index.html").unwrap_or_default();
+    let username: Option<String> = session.get("username").await.unwrap_or(None);
+    let placeholder = r#"<div id="user-menu-placeholder"></div>"#;
+
+    let menu_html = if let Some(user) = username {
+        format!(
+            r#"
+            <div class="user-menu">
+                <button onclick="toggleLogin()" class="dropbtn" style="background-color: #ffcc00; color: black;">{} ▼</button>
+                <div id="myDropdown" class="dropdown-content">
+                    <a href="/user/profile/{}" style="display:block; padding:5px; color:#ffcc00; text-decoration:none; border-bottom:1px solid #444;">My Profile</a>
+                    <a href="/user/logout" style="display:block; padding:5px; color:#ff5555; text-decoration:none;">Log Out</a>
+                </div>
+            </div>
+            "#,
+            user, user
+        )
+    } else {
+        r#"
+        <div class="user-menu">
+            <button onclick="toggleLogin()" class="dropbtn">Account ▼</button>
+            <div id="myDropdown" class="dropdown-content">
+                <div id="login-form">
+                    <form action="/user/login" method="post">
+                        <label style="font-size:0.8em; color:#aaa">Username</label>
+                        <input type="text" name="username" placeholder="Name" required style="width:100%; margin:5px 0; padding:5px;">
+                        
+                        <label style="font-size:0.8em; color:#aaa">Password</label>
+                        <input type="password" name="password" placeholder="Pass" required style="width:100%; margin:5px 0; padding:5px;">
+                        
+                        <button type="submit" style="width:100%; margin-top:10px; padding:5px; cursor:pointer;">Log In</button>
+                    </form>
+                    <div style="margin-top:10px; text-align:center;">
+                        <a href="/user/register" style="color:#ccc; font-size:0.9em;">Register new account</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        "#.to_string()
+    };
+    Html(html_content.replace(placeholder, &menu_html))
 }
 
 async fn post_simulation(

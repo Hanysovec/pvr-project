@@ -21,3 +21,7 @@ dotenvy = "0.15.7"
 futures = "0.3.31"
 itertools = "0.14.0"
 sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-rustls"] }
+argon2 = "0.5.3"
+rand_core = { version = "0.9.3", features = ["std"] }
+tower-sessions = "0.14.0"
+tower-sessions-sqlx-store = { version = "0.15.0", features = ["sqlite"] }
