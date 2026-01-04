@@ -5,12 +5,12 @@ use argon2::{
 use axum::{
     extract::{Form, Path, State},
     http::StatusCode,
-    response::{Html, Json, Redirect},
+    response::{Html, IntoResponse, Json, Redirect},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::Type;
-use std::fs;
+use std::{env, fs};
 use tower_sessions::Session;
 
 use crate::utils::AppState;
@@ -47,6 +47,11 @@ pub struct _User {
     pub password_hash: String,
     pub created_at: String,
     pub role: UserRole,
+}
+
+#[derive(Deserialize)]
+pub struct RedeemRequest {
+    pub code: String,
 }
 
 pub const LIMIT_COMBINATIONS_FREE: usize = 50;
@@ -219,6 +224,65 @@ pub async fn get_user_limits(State(state): State<AppState>, session: Session) ->
         "is_premium": is_premium,
         "role": role
     }))
+}
+
+pub async fn redeem_premium(
+    State(state): State<AppState>,
+    session: Session,
+    Json(payload): Json<RedeemRequest>,
+) -> impl IntoResponse {
+    let user_id: Option<i64> = session.get("user_id").await.unwrap_or(None);
+
+    if user_id.is_none() {
+        return (StatusCode::UNAUTHORIZED, "Not logged in".to_string());
+    }
+    let user_id = user_id.unwrap();
+
+    let hash_string = match env::var("PREMIUM_CODE_HASH") {
+        Ok(val) => val,
+        Err(_) => {
+            tracing::error!("PREMIUM_CODE_HASH missing in .env file!");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Server configuration error".to_string(),
+            );
+        }
+    };
+
+    let is_valid = match PasswordHash::new(&hash_string) {
+        Ok(parsed_hash) => Argon2::default()
+            .verify_password(payload.code.trim().as_bytes(), &parsed_hash)
+            .is_ok(),
+        Err(e) => {
+            tracing::error!("Invalid hash format in .env: {}", e);
+            false
+        }
+    };
+    if !is_valid {
+        return (StatusCode::BAD_REQUEST, "Invalid code".to_string());
+    }
+
+    let result = sqlx::query("UPDATE users SET role = 'Premium' WHERE id = ?")
+        .bind(user_id)
+        .execute(&state.db)
+        .await;
+
+    match result {
+        Ok(_) => {
+            if let Err(e) = session.insert("role", "Premium").await {
+                tracing::error!("Failed to update session role: {}", e);
+            }
+
+            (StatusCode::OK, "Account upgraded to Premium".to_string())
+        }
+        Err(e) => {
+            tracing::error!("Database update failed: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Database error".to_string(),
+            )
+        }
+    }
 }
 
 /* TEST */

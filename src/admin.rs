@@ -116,7 +116,6 @@ pub async fn admin_dashboard(State(state): State<AppState>, session: Session) ->
 
     let template = fs::read_to_string("frontend/admin.html")
         .unwrap_or("<h1>Error loading template</h1>".to_string());
-    tracing::error!("Error loading admin template.");
     Html(template.replace("{{USER_ROWS}}", &rows_html))
 }
 

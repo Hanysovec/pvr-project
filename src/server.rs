@@ -30,6 +30,7 @@ use crate::{
 
 const MAX_RUNNING_SIMS: usize = 2;
 
+// Main server function
 pub async fn run_server() -> Result<(), String> {
     dotenvy::dotenv().ok();
     let database_url = env::var("DATABASE_URL").unwrap_or("sqlite:sims.db?mode=rwc".to_string());
@@ -248,6 +249,7 @@ pub fn create_router(
         .route("/api/item_icon/{id}", get(get_item_icon_only))
         .route("/api/item_tooltip/{id}", get(get_item_tooltip))
         .route("/api/user/limits", get(users::get_user_limits))
+        .route("/api/user/redeem", post(users::redeem_premium))
         // USER
         .route(
             "/user/register",

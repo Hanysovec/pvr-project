@@ -116,24 +116,71 @@
             font-weight: bold;
             color: #ddd;
         }
+
+        .premium-box {
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .premium-box input {
+            background: #111;
+            border: 1px solid #555;
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            flex-grow: 1;
+        }
+
+        .premium-box button {
+            background: #ffcc00;
+            color: #000;
+            border: none;
+            padding: 10px 20px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+
+        .premium-box button:hover {
+            background: #e6b800;
+        }
+
+        body.role-Premium .premium-box,
+        body.role-Admin .premium-box {
+            display: none !important;
+        }
     </style>
 </head>
 
-<body>
+<body class="role-{{ROLE}}">
+
     <div class="header">
         <div class="user-info">
-            <a href="/" class="back-btn">Back to Main menu</a>
+            <a href="/" class="back-btn">&larr; Back to Main menu</a>
             <h1>{{USERNAME}}</h1>
             <p class="role-container {{ROLE}}">
-                <span class="role-badge">{{ROLE}}</span>
+                Role: <span class="role-badge">{{ROLE}}</span>
             </p>
         </div>
-
         <a href="/user/logout" class="logout-btn">Logout</a>
     </div>
 
-    <h2 style="color: #ccc;">Recent Simulations</h2>
+    <div class="premium-box">
+        <div style="flex-grow: 1;">
+            <h3 style="margin: 0 0 5px 0; color: #ffcc00;">Upgrade to Premium</h3>
+            <p style="margin: 0; color: #aaa; font-size: 0.9rem;">Enter your code.</p>
+        </div>
+        <input type="text" id="promoCode" placeholder="Enter code here..." autocomplete="off">
+        <button id="redeemBtn">Redeem</button>
+    </div>
 
+    <h2 style="color: #ccc;">Recent Simulations</h2>
     <table>
         <thead>
             <tr>
@@ -148,6 +195,38 @@
             {{HISTORY_ROWS}}
         </tbody>
     </table>
+
+    <script>
+        const btn = document.getElementById('redeemBtn');
+        const input = document.getElementById('promoCode');
+
+        if (btn) {
+            btn.addEventListener('click', async () => {
+                const code = input.value;
+                if (!code) return alert("Please enter a code.");
+
+                try {
+                    const response = await fetch('/api/user/redeem', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ code: code })
+                    });
+
+                    if (response.ok) {
+                        window.location.reload();
+                    } else {
+                        const text = await response.text();
+                        alert("Failed: " + text);
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert("Network error.");
+                }
+            });
+        }
+    </script>
 
 </body>
 
