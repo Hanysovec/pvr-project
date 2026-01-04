@@ -4,17 +4,35 @@
 <head>
     <meta charset="UTF-8">
     <title>SimC Web Interface</title>
-    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/assets/style.css">
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             padding: 2rem;
             background-color: #1e1e1e;
             color: #f0f0f0;
+
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
         }
 
         h1 {
             color: #ffcc00;
+            margin-bottom: 20px;
+        }
+
+        #sim-form {
+            background-color: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #444;
+
+            width: 100%;
+            max-width: 800px;
+            box-sizing: border-box;
+            text-align: left;
         }
 
         textarea {
@@ -23,7 +41,9 @@
             color: #ccc;
             padding: 10px;
             width: 100%;
-            max-width: 800px;
+            box-sizing: border-box;
+            font-family: 'Consolas', 'Monaco', monospace;
+            resize: vertical;
         }
 
         button[type="submit"] {
@@ -34,6 +54,9 @@
             font-weight: bold;
             cursor: pointer;
             margin-top: 10px;
+            margin-right: 10px;
+            border-radius: 4px;
+            transition: background 0.2s;
         }
 
         button[type="submit"]:hover {

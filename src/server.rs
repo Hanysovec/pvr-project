@@ -3,6 +3,7 @@ use axum::{
     extract::{Form, Path, Query, State},
     response::{Html, Json, Redirect},
     routing::{get, post},
+    http::StatusCode,
 };
 use dashmap::DashMap;
 use itertools::Itertools;
@@ -19,7 +20,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use tokio::sync::{Mutex, Semaphore, mpsc};
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir};
 use uuid::Uuid;
 use futures::future::join_all;
 use sqlx::{sqlite::SqlitePool, Pool, Sqlite};
@@ -360,7 +361,9 @@ pub async fn run_server() -> Result<(), String> {
         .route("/admin/role", post(admin::update_role))
         .route("/admin/delete", post(admin::delete_user))
         .route("/admin/password", post(admin::reset_password))
-        .fallback_service(ServeDir::new("frontend"))
+        // Config Stuff
+        .nest_service("/assets", ServeDir::new("frontend/assets"))
+        .fallback(handler_404)
         .layer(session_layer)
         .with_state(state);
 
@@ -1086,4 +1089,11 @@ async fn get_wowhead_tooltip(
     }
 
     Json(serde_json::json!({ "error": "Failed to fetch tooltip" }))
+}
+
+async fn handler_404(_session: Session) -> (StatusCode, Html<String>) {
+    match fs::read_to_string("frontend/404.html") {
+        Ok(content) => (StatusCode::NOT_FOUND, Html(content)),
+        Err(_) => (StatusCode::NOT_FOUND, Html("<h1>404 Not Found</h1>".to_string())),
+    }
 }
