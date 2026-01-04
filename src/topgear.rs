@@ -254,10 +254,30 @@ pub fn process_topgear_batch(
 
         let mut content = base_simc.to_string();
         content.push_str("\n\n# --- Top Gear Combination ---\n");
+        
+        let mut finger_count = 0;
+        let mut trinket_count = 0;
         for line in combination {
-            content.push_str(line);
+            let mut processed_line = line.clone();
+            if line.starts_with("finger") {
+                finger_count += 1;
+                let parts: Vec<&str> = line.splitn(2, '=').collect();
+                if parts.len() == 2 {
+                    processed_line = format!("finger{}={}", finger_count, parts[1]);
+                }
+            } 
+            else if line.starts_with("trinket") {
+                trinket_count += 1;
+                let parts: Vec<&str> = line.splitn(2, '=').collect();
+                if parts.len() == 2 {
+                    processed_line = format!("trinket{}={}", trinket_count, parts[1]);
+                }
+            }
+
+            content.push_str(&processed_line);
             content.push('\n');
         }
+
         content.push_str("max_time=300\niterations=1000\n");
 
         let temp_simc_path = format!("files/{}_{}.simc", id, i);
@@ -293,4 +313,46 @@ pub fn process_topgear_batch(
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     fs::write(output_path, json_str)?;
     Ok(())
+}
+
+/* TESTS */
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_combinations_empty() {
+        // Should calculate 1 combination (equipped gear)
+        // But should not add new lines
+        let items = HashMap::new();
+        let combos = generate_combinations(items);
+        assert_eq!(combos.len(), 1);
+        assert!(combos[0].is_empty());
+    }
+
+    #[test]
+    fn test_combinations_simple() {
+        // 2 heads, 1 chest = 2 combinations
+        let mut items = HashMap::new();
+        items.insert("Head".to_string(), vec!["h1".to_string(), "h2".to_string()]);
+        items.insert("Chest".to_string(), vec!["c1".to_string()]);
+
+        let combos = generate_combinations(items);
+        assert_eq!(combos.len(), 2);
+    }
+
+    #[test]
+    fn test_combinations_rings() {
+        // 3 rings into 2 slots = 
+        // = 3 combinations (1-2, 1-3, 2-3)
+        // + 1 head
+        // 3 * 1 = 3 combinations 
+        let mut items = HashMap::new();
+        items.insert("Finger".to_string(), vec!["r1".to_string(), "r2".to_string(), "r3".to_string()]);
+        items.insert("Head".to_string(), vec!["h1".to_string()]);
+
+        let combos = generate_combinations(items);
+        assert_eq!(combos.len(), 3);
+    }
 }

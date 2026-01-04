@@ -3,36 +3,6 @@
 version = 4
 
 [[package]]
-name = "PvRProject_SimulationCraft_SOL0123"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "axum",
- "dashmap",
- "dotenvy",
- "futures",
- "html-escape",
- "hyper",
- "itertools",
- "rand_core 0.9.3",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "sqlx",
- "tempfile",
- "tokio",
- "tower",
- "tower-http",
- "tower-sessions",
- "tower-sessions-sqlx-store",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "addr2line"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1504,6 +1474,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89ae43fd86e4158d6db51ad8e2b80f313af9cc74f5c0e03ccb87de09998732de"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "pvr_project_simulationcraft_sol0123"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "axum",
+ "dashmap",
+ "dotenvy",
+ "futures",
+ "html-escape",
+ "http-body-util",
+ "hyper",
+ "itertools",
+ "mime",
+ "rand_core 0.9.3",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tower-sessions",
+ "tower-sessions-sqlx-store",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

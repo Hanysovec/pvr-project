@@ -219,7 +219,26 @@ pub async fn run_server() -> Result<(), String> {
         }
     });
 
-    let app = Router::new()
+    let app = create_router(state, session_layer);
+
+    // let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    tracing::info!("Server listening on http://{}", addr);
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("Error binding: {}", e))?;
+
+    axum::serve(listener, app.into_make_service())
+        .await
+        .map_err(|e| format!("Error server: {}", e))
+}
+
+pub fn create_router(
+    state: utils::AppState,
+    session_layer: SessionManagerLayer<SqliteStore>,
+) -> Router {
+    Router::new()
         .route("/", get(get_index))
         // QUICKSIM
         .route("/quicksim/run", post(post_simulation))
@@ -253,19 +272,7 @@ pub async fn run_server() -> Result<(), String> {
         .nest_service("/assets", ServeDir::new("frontend/assets"))
         .fallback(handler_404)
         .layer(session_layer)
-        .with_state(state);
-
-    // let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    tracing::info!("Server listening on http://{}", addr);
-
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .map_err(|e| format!("Error binding: {}", e))?;
-
-    axum::serve(listener, app.into_make_service())
-        .await
-        .map_err(|e| format!("Error server: {}", e))
+        .with_state(state)
 }
 
 async fn get_index(session: Session) -> Html<String> {
@@ -283,5 +290,21 @@ async fn handler_404(uri: axum::http::Uri) -> (StatusCode, Html<String>) {
             StatusCode::NOT_FOUND,
             Html("<h1>404 Not Found</h1>".to_string()),
         ),
+    }
+}
+
+/* TESTS */
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Uri;
+
+    #[tokio::test]
+    async fn test_handler_404() {
+        let uri = "/fart".parse::<Uri>().unwrap();
+        let (status, body) = handler_404(uri).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        assert!(body.0.contains("404"));
     }
 }

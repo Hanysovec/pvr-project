@@ -167,6 +167,7 @@ pub fn parse_simc_input(input: &str) -> BTreeMap<String, Vec<GearItem>> {
         } else if let Some(caps) = re_bag.captures(current_line) {
             if let Some(name_caps) = re_name_ilvl.captures(prev_line) {
                 let (bonus, gems) = parse_params(&caps[3]);
+                let clean_line = format!("{}=,id={}{}", &caps[1], &caps[2], &caps[3]);
                 item = Some(GearItem {
                     name: name_caps[1].to_string(),
                     ilvl: name_caps[2].to_string(),
@@ -175,7 +176,7 @@ pub fn parse_simc_input(input: &str) -> BTreeMap<String, Vec<GearItem>> {
                     bonus_ids: bonus,
                     gem_ids: gems,
                     is_equipped: false,
-                    raw_line: current_line.to_string(),
+                    raw_line: clean_line,
                 });
             }
         }
@@ -216,5 +217,103 @@ pub fn extract_dps_from_json(json_str: &str, sim_type: &str) -> Option<f64> {
             .get("dps")?
             .get("mean")?
             .as_f64();
+    }
+}
+
+/* TESTS */
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_dps_quicksim() {
+        let json_data = r#"
+        {
+            "sim": {
+                "players": [
+                    {
+                        "collected_data": {
+                            "dps": { "mean": 12345.67 }
+                        }
+                    }
+                ]
+            }
+        }
+        "#;
+        let dps = extract_dps_from_json(json_data, "QuickSim");
+        assert_eq!(dps, Some(12345.67));
+    }
+
+    #[test]
+    fn test_extract_dps_topgear() {
+        let json_data = r#"
+        {
+            "results": [
+                { "dps": 9999.9, "items": [] }
+            ]
+        }
+        "#;
+        let dps = extract_dps_from_json(json_data, "TopGear");
+        assert_eq!(dps, Some(9999.9));
+    }
+
+    #[test]
+    fn test_extract_dps_invalid() {
+        let dps = extract_dps_from_json("invalid json", "QuickSim");
+        assert_eq!(dps, None);
+    }
+
+    #[test]
+    fn test_parse_simc_equipped_item() {
+        // Simulate a simc input of a equipped item
+        let input = r#"
+            # Mythic Helmet (730)
+            head=,id=12345,bonus_id=666
+        "#;
+        let map = parse_simc_input(input);
+
+        assert!(map.contains_key("Head"));
+        let items = &map["Head"];
+        assert_eq!(items.len(), 1);
+
+        let item = &items[0];
+        assert_eq!(item.id, "12345");
+        assert_eq!(item.bonus_ids, "666");
+        assert_eq!(item.name, "Mythic Helmet");
+        assert!(item.is_equipped);
+    }
+
+    #[test]
+    fn test_parse_simc_bag_item() {
+        // Simulate a item in bag and '#' cleaning
+        let input = r#"
+            # Mythic Helmet (730)
+            # head=,id=12345,bonus_id=666/67,gem_id=69
+        "#;
+        let map = parse_simc_input(input);
+
+        assert!(map.contains_key("Head"));
+        let item = &map["Head"][0];
+
+        assert_eq!(item.id, "12345");
+        assert_eq!(item.gem_ids.len(), 1);
+        assert_eq!(item.gem_ids[0], "69");
+        assert!(!item.is_equipped);
+
+        assert_eq!(item.raw_line, "head=,id=12345,bonus_id=666/67,gem_id=69");
+    }
+
+    #[test]
+    fn test_parse_simc_slots_mapping() {
+        // Simulate and test ring mapping
+        let input = r#"
+            # Ring 1 (600)
+            finger1=,id=1
+            # Ring 2 (600)
+            finger2=,id=2
+        "#;
+        let map = parse_simc_input(input);
+        assert!(map.contains_key("Finger"));
+        assert_eq!(map["Finger"].len(), 2);
     }
 }
