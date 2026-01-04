@@ -5,12 +5,12 @@ This aplication is writen in **Rust**
 # Functions
 
 * **QuickSim** Sims your currently equipped gear and talents, requires simulationcraft addon output.
-* **TopGear** Allows you to select gear from you bag and use it to find the best combination for you.
+* **TopGear** Allows you to select gear from your bag and use it to find the best combination for you.
 * **Accounts** Allows you to create a account to store your simulations, password is hashed and not stored in plain text ;)
 * **Roles** Add-on to accounts (User, Premium, Admin)
 * **Queue** Every simulation request is added to a queue to help descrease the load on server
 * **Premium** Has it's own priority queue to skip ahead normal Users
-* **History** Shows you your simulation history in you Account tab
+* **History** Shows you your simulation history in your Account tab
 
 # Technologies
 
