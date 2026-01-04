@@ -19,6 +19,7 @@ This aplication is writen in **Rust**
 * **SQLite**
 * **Tokio**
 * **Argon2**
+* And more...
 
 # Requirements
 1. **Rust & Cargo** [Install Rust](https://www.rust-lang.org/tools/install)
