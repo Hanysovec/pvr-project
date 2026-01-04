@@ -1,4 +1,3 @@
-use crate::server::AppState;
 use argon2::{
     Argon2,
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
@@ -12,6 +11,8 @@ use serde_json::{Value, json};
 use sqlx::Type;
 use std::fs;
 use tower_sessions::Session;
+
+use crate::utils::AppState;
 
 #[derive(Deserialize)]
 pub struct AuthPayload {

@@ -1,4 +1,3 @@
-use crate::server::AppState;
 use argon2::{
     Argon2, PasswordHasher,
     password_hash::{SaltString, rand_core::OsRng},
@@ -10,6 +9,8 @@ use axum::{
 use serde::Deserialize;
 use std::fs;
 use tower_sessions::Session;
+
+use crate::utils::AppState;
 
 #[derive(sqlx::FromRow)]
 struct UserSummary {
