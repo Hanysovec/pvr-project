@@ -24,4 +24,4 @@ This aplication is writen in **Rust**
 # Requirements
 1. **Rust & Cargo** [Install Rust](https://www.rust-lang.org/tools/install)
 2. **Blizzard API** Create a .env file with BLIZZARD_CLIENT_ID, BLIZZARD_CLIENT_SECRET
-3. **SimulationCraft CLI** [SimC](https://www.simulationcraft.org/download.html)
+3. **SimulationCraft CLI** [SimC](https://www.simulationcraft.org/download.html), extract the folder to be on same level as project folder!
