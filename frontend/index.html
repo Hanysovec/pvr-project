@@ -4,93 +4,13 @@
 <head>
     <meta charset="UTF-8">
     <title>SimC Web Interface</title>
+    <link rel="stylesheet" href="/style.css">
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             padding: 2rem;
             background-color: #1e1e1e;
             color: #f0f0f0;
-        }
-
-        .user-menu {
-            position: absolute;
-            top: 20px;
-            right: 30px;
-            display: inline-block;
-        }
-
-        .dropbtn {
-            background-color: #2a2a2a;
-            color: #ffcc00;
-            padding: 10px 20px;
-            font-size: 16px;
-            border: 1px solid #444;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
-
-        .dropbtn:hover {
-            background-color: #333;
-        }
-
-        .dropdown-content {
-            display: none;
-            position: absolute;
-            right: 0;
-            background-color: #2a2a2a;
-            min-width: 200px;
-            box-shadow: 0px 8px 16px 0px rgba(0, 0, 0, 0.5);
-            border: 1px solid #444;
-            border-radius: 4px;
-            z-index: 1;
-            padding: 15px;
-            margin-top: 5px;
-        }
-
-        .show {
-            display: block;
-        }
-
-        #login-form input {
-            width: 100%;
-            padding: 8px;
-            margin: 5px 0;
-            box-sizing: border-box;
-            background-color: #111;
-            border: 1px solid #555;
-            color: white;
-            border-radius: 3px;
-        }
-
-        #login-form button {
-            width: 100%;
-            background-color: #ffcc00;
-            color: white;
-            padding: 8px;
-            border: none;
-            border-radius: 3px;
-            cursor: pointer;
-            margin-top: 10px;
-            font-weight: bold;
-        }
-
-        #login-form button:hover {
-            background-color: #ffcc00;
-        }
-
-        #login-form a {
-            display: block;
-            text-align: center;
-            margin-top: 10px;
-            color: #ccc;
-            font-size: 0.9em;
-            text-decoration: none;
-        }
-
-        #login-form a:hover {
-            color: #ffcc00;
-            text-decoration: underline;
         }
 
         h1 {
@@ -123,11 +43,8 @@
 </head>
 
 <body>
-
-    <div id="user-menu-placeholder"></div>
-
+    {{HEADER}}
     <h1>SimC Simulation</h1>
-
     <form id="sim-form">
         <label for="input_content">SimC input:</label><br>
         <textarea id="input_content" name="input_content" rows="20"></textarea><br>
@@ -139,25 +56,6 @@
     <p id="result"></p>
 
     <script>
-        function toggleLogin() {
-            const dropdown = document.getElementById("myDropdown");
-            if (dropdown) {
-                dropdown.classList.toggle("show");
-            }
-        }
-
-        window.onclick = function (event) {
-            if (!event.target.matches('.dropbtn') && !event.target.closest('.dropdown-content')) {
-                var dropdowns = document.getElementsByClassName("dropdown-content");
-                for (var i = 0; i < dropdowns.length; i++) {
-                    var openDropdown = dropdowns[i];
-                    if (openDropdown.classList.contains('show')) {
-                        openDropdown.classList.remove('show');
-                    }
-                }
-            }
-        }
-
         const form = document.getElementById('sim-form');
         form.addEventListener('submit', async (e) => {
             e.preventDefault();

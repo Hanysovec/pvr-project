@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Sim Result</title>
+    <link rel="stylesheet" href="/style.css">
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -15,15 +16,20 @@
         .status-box {
             margin-bottom: 20px;
             font-weight: bold;
-            color: orange;
+            font-size: 1.2rem;
+            padding: 10px;
+            border-radius: 5px;
+            display: inline-block;
         }
     </style>
 </head>
 
 <body>
-    <h1>QuickSim: <small>{{ID}}</small></h1>
+    {{HEADER}}
+    <a href="/" class="back-btn">Back to Main menu</a>
+    <h1>QuickSim: <small style="color: #888; font-size: 0.6em;">{{ID}}</small></h1>
 
-    <div id="status" class="status-box">Initializing...</div>
+    <div id="status" class="status-box">Connecting...</div>
     <div id="result"></div>
 
     <script>
@@ -33,21 +39,43 @@
             try {
                 let statusRes = await fetch(`/api/status/${simId}`);
                 let statusJson = await statusRes.json();
-
                 let statusDiv = document.getElementById("status");
-                statusDiv.textContent = "Status: " + statusJson.status;
 
-                if (statusJson.status === "Finished") {
-                    statusDiv.style.color = "green";
+                if (statusJson.status === "Queued") {
+                    const pos = statusJson.queue_position;
+                    const total = statusJson.queue_total;
+
+                    statusDiv.textContent = `Queue: (${pos} / ${total})`;
+                    statusDiv.style.color = "#ffcc00";
+
+                    setTimeout(checkStatus, 1000);
+
+                } else if (statusJson.status === "Processing") {
+                    if (statusJson.progress_current) {
+                        statusDiv.textContent = `Simulating... (${statusJson.progress_current} / ${statusJson.progress_total})`;
+                    } else {
+                        statusDiv.textContent = "Simulating...";
+                    }
+                    statusDiv.style.color = "#4fc3f7";
+
+                    setTimeout(checkStatus, 1000);
+
+                } else if (statusJson.status === "Finished") {
+                    statusDiv.textContent = "Simulation Finished";
+                    statusDiv.style.color = "#66bb6a";
                     fetchResult();
+
                 } else if (statusJson.status === "Failed") {
-                    statusDiv.style.color = "red";
-                    statusDiv.textContent += " (" + statusJson.error + ")";
+                    statusDiv.style.color = "#ef5350";
+                    statusDiv.textContent = "Failed: " + (statusJson.error || "Unknown error");
+
                 } else {
+                    statusDiv.textContent = "Status: " + statusJson.status;
                     setTimeout(checkStatus, 2000);
                 }
             } catch (e) {
                 console.error(e);
+                setTimeout(checkStatus, 3000);
             }
         }
 
@@ -55,7 +83,6 @@
             let res = await fetch(`/quicksim/${simId}/data`);
             if (res.ok) {
                 let json = await res.json();
-
                 let dps = 0;
 
                 if (json.dps) {
@@ -68,9 +95,12 @@
                 }
 
                 if (dps > 0) {
-                    document.getElementById("result").innerHTML = "<h2>DPS: " + Math.round(dps).toLocaleString() + "</h2>";
+                    document.getElementById("result").innerHTML =
+                        `<div style="font-size: 2rem; font-weight: bold; margin-top: 20px;">
+                            DPS: <span style="color: #4CAF50;">${Math.round(dps).toLocaleString()}</span>
+                        </div>`;
                 } else {
-                    document.getElementById("result").innerHTML = "Error parsing result";
+                    document.getElementById("result").innerHTML = "<p>Error parsing result (DPS not found).</p>";
                 }
             }
         }

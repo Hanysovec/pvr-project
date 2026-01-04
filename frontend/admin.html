@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Panel</title>
+    <link rel="stylesheet" href="/style.css">
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            padding: 2rem;
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: #ffcc00;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #444;
+            padding-bottom: 20px;
+            margin-bottom: 20px;
+        }
+
+        a {
+            color: #ccc;
+            text-decoration: none;
+        }
+
+        a:hover {
+            color: white;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: #2a2a2a;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        th,
+        td {
+            padding: 10px 15px;
+            text-align: left;
+            border-bottom: 1px solid #444;
+            vertical-align: middle;
+        }
+
+        th {
+            background-color: #333;
+            color: #ffcc00;
+        }
+
+        tr:hover {
+            background-color: #303030;
+        }
+
+        select {
+            padding: 5px;
+            background: #111;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        input[type="text"] {
+            background: #111;
+            border: 1px solid #555;
+            color: white;
+            border-radius: 3px;
+        }
+
+        button {
+            cursor: pointer;
+            border: none;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+
+        .btn-small {
+            background-color: #4CAF50;
+            color: white;
+            padding: 3px 8px;
+            font-size: 0.8em;
+        }
+
+        .btn-small:hover {
+            background-color: #45a049;
+        }
+
+        .btn-danger {
+            background-color: #d32f2f;
+            color: white;
+            padding: 5px 10px;
+        }
+
+        .btn-danger:hover {
+            background-color: #b71c1c;
+        }
+    </style>
+</head>
+
+<body>
+    {{HEADER}}
+    <div class="header">
+        <div>
+            <h1>Admin Panel</h1>
+            <a href="/">Back to Main menu</a>
+        </div>
+        <div>
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 50px;">ID</th>
+                <th>Username</th>
+                <th>Created</th>
+                <th>Role (Change)</th>
+                <th>Reset Password</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{USER_ROWS}}
+        </tbody>
+    </table>
+
+</body>
+
+</html>

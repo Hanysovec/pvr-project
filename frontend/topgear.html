@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Top Gear Selection</title>
+    <link rel="stylesheet" href="/style.css">
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -237,7 +238,7 @@
 </head>
 
 <body>
-
+    {{HEADER}}
     <h1>Top Gear Selection</h1>
 
     <div class="grid-container">
@@ -245,24 +246,45 @@
     </div>
 
     <div class="sticky-footer">
-        <div id="comb-count">Combinations: <span id="total-combs">0</span></div>
+        <div id="comb-display"
+            style="font-size: 1.1rem; font-weight: bold; background: #1a1a1a; padding: 8px 20px; border-radius: 20px; border: 1px solid #444;">
+            Combinations: <span id="current-combs">0</span> / <span id="max-limit">...</span>
+        </div>
 
         <div class="actions">
             <button onclick="window.location.href='/'">Back</button>
-            <button onclick="runTopGear()" class="run-btn">Run Simulation</button>
+            <button id="btn-run" onclick="runTopGear()" class="run-btn">Run Simulation</button>
         </div>
     </div>
 
     <script>
         // {{BASE_SIMC_INJECT}}
-        const SIM_LIMIT = 50;
 
+        let SIM_LIMIT = 50;
+        async function fetchLimits() {
+            try {
+                const res = await fetch('/api/user/limits');
+                if (!res.ok) throw new Error("API Limit fetch failed");
+                const data = await res.json();
+                SIM_LIMIT = data.limit;
+
+                const maxEl = document.getElementById('max-limit');
+                if (maxEl) maxEl.innerText = SIM_LIMIT.toLocaleString();
+
+                updateCombinations();
+            } catch (e) {
+                console.error("Failed to fetch limits", e);
+            }
+        }
+        fetchLimits();
         function getNormalizedSlot(element) {
             let slot = element.getAttribute('data-slot');
+            if (!slot) return 'Unknown';
+            slot = slot.toLowerCase();
             if (slot.startsWith('finger')) return 'Finger';
             if (slot.startsWith('trinket')) return 'Trinket';
-            if (slot === 'main_hand') return 'Main Hand';
-            if (slot === 'off_hand') return 'Off Hand';
+            if (slot === 'main_hand' || slot === 'mainhand') return 'Main Hand';
+            if (slot === 'off_hand' || slot === 'offhand') return 'Off Hand';
             return slot.charAt(0).toUpperCase() + slot.slice(1);
         }
 
@@ -289,6 +311,7 @@
                 let ways = 1;
                 if (slot === "Finger" || slot === "Trinket") {
                     if (count >= 2) ways = combinations(count, 2);
+                    else if (count === 1) ways = 1;
                     else ways = 1;
                 } else {
                     ways = count;
@@ -296,34 +319,50 @@
                 totalCombinations *= ways;
             }
 
-            const el = document.getElementById('total-combs');
-            el.textContent = totalCombinations.toLocaleString();
-            const parent = document.getElementById('comb-count');
-            parent.className = "";
-            if (totalCombinations <= SIM_LIMIT) parent.classList.add('limit-ok');
-            else parent.classList.add('limit-error');
+            if (selectedItems.length === 0) totalCombinations = 0;
+
+            const currentEl = document.getElementById('current-combs');
+            const displayDiv = document.getElementById('comb-display');
+            const runBtn = document.getElementById('btn-run');
+
+            if (currentEl) currentEl.textContent = totalCombinations.toLocaleString();
+
+            if (totalCombinations > SIM_LIMIT) {
+                if (displayDiv) {
+                    displayDiv.classList.remove('limit-ok');
+                    displayDiv.classList.add('limit-error');
+                }
+            } else {
+                if (displayDiv) {
+                    displayDiv.classList.remove('limit-error');
+                    displayDiv.classList.add('limit-ok');
+                }
+
+                if (runBtn) {
+                    runBtn.disabled = false;
+                    runBtn.innerText = "Run Simulation";
+                    runBtn.title = "";
+                }
+            }
         }
 
         function toggleItem(element) {
             element.classList.toggle('selected');
             updateCombinations();
-
             loadTooltip(element);
         }
 
         async function loadIcon(card) {
             const itemId = card.getAttribute('data-id');
             const img = card.querySelector('.item-icon');
+            if (!img) return;
 
             try {
                 const res = await fetch(`/api/item_icon/${itemId}`);
+                if (!res.ok) return;
                 const data = await res.json();
-                if (data.icon_url) {
-                    img.src = data.icon_url;
-                }
-            } catch (e) {
-                console.error("Icon load failed for " + itemId, e);
-            }
+                if (data.icon_url) img.src = data.icon_url;
+            } catch (e) { console.error(e); }
         }
 
         async function loadTooltip(card) {
@@ -337,6 +376,7 @@
 
             const tooltip = card.querySelector('.tooltip');
             const weaponTag = card.querySelector('.weapon-tag');
+            if (!tooltip) return;
 
             const params = new URLSearchParams({
                 bonus: bonusIds,
@@ -346,6 +386,7 @@
 
             try {
                 const res = await fetch(`/api/item_tooltip/${itemId}?${params.toString()}`);
+                if (!res.ok) throw new Error("Tooltip fetch failed");
                 const data = await res.json();
 
                 let tooltipContent = "";
@@ -374,7 +415,7 @@
 
                 tooltip.innerHTML = tooltipContent;
 
-                if (data.weapon_type) {
+                if (data.weapon_type && weaponTag) {
                     card.setAttribute('data-weapon-type', data.weapon_type);
                     weaponTag.textContent = data.weapon_type;
                     weaponTag.style.display = 'block';
@@ -387,9 +428,11 @@
         }
 
         function runTopGear() {
-            const counterDiv = document.getElementById('comb-count');
-            if (counterDiv.classList.contains('limit-error')) {
-                alert(`Too many combinations! Please keep it under ${SIM_LIMIT}.`);
+            const currentEl = document.getElementById('current-combs');
+            const currentVal = parseInt(currentEl ? currentEl.innerText.replace(/,/g, '') : "0");
+
+            if (currentVal > SIM_LIMIT) {
+                alert(`Limit exceeded! (${currentVal} / ${SIM_LIMIT})`);
                 return;
             }
 
@@ -403,7 +446,7 @@
 
                 if (slot === 'Main Hand') {
                     selectedMainHands.push({
-                        type: item.getAttribute('data-weapon-type') || '1H'
+                        type: item.getAttribute('data-weapon-type') || '2H'
                     });
                 }
             });
@@ -415,26 +458,35 @@
                 const slotName = header.textContent;
                 const count = counts[slotName] || 0;
 
-                if (slotName === 'Finger' || slotName === 'Trinket') {
-                    if (count < 2) errors.push(`${slotName}: Select at least 2 items.`);
+                if (count > 0) {
+                    if ((slotName === 'Finger' || slotName === 'Trinket') && count < 2) {
+                        errors.push(`${slotName}: Select atleast 2.`);
+                    }
                 }
-                else if (slotName === 'Main Hand') {
-                    if (count < 1) errors.push(`${slotName}: Select at least 1 item.`);
 
+                if (slotName === 'Main Hand' && count > 0) {
                     const offHandCount = counts['Off Hand'] || 0;
                     let has2H = selectedMainHands.some(w => w.type === '2H');
                     let has1H = selectedMainHands.some(w => w.type === '1H');
 
                     if (has1H && offHandCount === 0) {
-                        errors.push(`Main Hand: You selected a 1H weapon but no Off-Hand.`);
-                    } else if (has2H && !has1H && offHandCount > 0) {
-                        errors.push(`Off Hand: You selected a Off-hand with 2H weapon.`)
+                        errors.push(`Main Hand: Selected 1H but no Off-Hand.`);
+                    }
+                    if (has2H && !has1H && offHandCount > 0) {
+                        errors.push(`Off Hand: You selected an Off-hand with a 2H weapon.`);
+                    }
+                    if (!has1H && offHandCount > 0) {
+                        errors.push(`Off Hand: You selected an Off-hand without a 1H weapon.`);
                     }
                 }
-                else if (slotName === 'Off Hand') {
+                if (slotName === 'Off Hand' && count > 0) {
+                    let has1H = selectedMainHands.some(w => w.type === '1H');
+                    if (!has1H) {
+                        errors.push(`Off Hand: You selected an Off-hand without a 1H weapon.`);
+                    }
                 }
-                else {
-                    if (count < 1) errors.push(`${slotName}: Select at least 1 item.`);
+                if (count < 1 && slotName != 'Off Hand') {
+                    errors.push(`${slotName}: Select atleast one.`);
                 }
             });
 
@@ -444,8 +496,7 @@
             }
 
             const selectedItemsMap = {};
-
-            document.querySelectorAll('.item-card.selected').forEach(card => {
+            selectedItems.forEach(card => {
                 const slot = getNormalizedSlot(card);
                 const rawLine = card.getAttribute('data-simc-line');
 
@@ -457,34 +508,27 @@
 
             fetch('/topgear/run', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    base_simc: BASE_SIMC,
+                    base_simc: typeof BASE_SIMC !== 'undefined' ? BASE_SIMC : "",
                     selected_items: selectedItemsMap
                 })
-            })
-                .then(response => {
-                    if (response.redirected) {
-                        window.location.href = response.url;
-                    }
-                })
-                .catch(err => console.error(err));
+            }).then(response => {
+                if (response.redirected) window.location.href = response.url;
+                else if (!response.ok) {
+                    response.text().then(text => alert("Error: " + text));
+                }
+            }).catch(err => console.error(err));
         }
 
-
-        document.querySelectorAll('.item-card').forEach(card => loadIcon(card));
-
-        document.querySelectorAll('.item-card.selected').forEach(card => loadTooltip(card));
-
-        document.querySelectorAll('.item-card:not(.selected)').forEach(card => {
-            card.addEventListener('mouseenter', () => {
-                loadTooltip(card);
+        document.addEventListener("DOMContentLoaded", () => {
+            document.querySelectorAll('.item-card').forEach(card => loadIcon(card));
+            document.querySelectorAll('.item-card.selected').forEach(card => loadTooltip(card));
+            document.querySelectorAll('.item-card:not(.selected)').forEach(card => {
+                card.addEventListener('mouseenter', () => loadTooltip(card));
             });
+            updateCombinations();
         });
-
-        updateCombinations();
     </script>
 </body>
 

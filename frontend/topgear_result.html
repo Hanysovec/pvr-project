@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <title>Top Gear Results</title>
+    <link rel="stylesheet" href="/style.css">
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -223,7 +224,7 @@
 </head>
 
 <body>
-
+    {{HEADER}}
     <h1>Top Gear Simulation: <small>{{ID}}</small></h1>
     <div id="wowhead-tooltip-container"></div>
     <div id="status-box" class="status-container">
@@ -234,7 +235,7 @@
     </div>
 
     <div id="result-container">
-        <button onclick="window.location.href='..'" style="margin-bottom:15px; padding:10px;">Back</button>
+        <a href="/" class="back-btn">Back to Main menu</a>
         <table>
             <thead>
                 <tr>
@@ -261,20 +262,43 @@
                 let res = await fetch(`/api/status/${simId}`);
                 let json = await res.json();
 
-                if (json.status === "Processing" && json.progress_total) {
-                    const pct = Math.round((json.progress_current / json.progress_total) * 100);
-                    statusText.textContent = `Processing combination ${json.progress_current} of ${json.progress_total} (${pct}%)`;
-                    progressBar.style.width = pct + "%";
-                    setTimeout(checkStatus, 2000);
+                if (json.status === "Queued") {
+                    const pos = json.queue_position;
+                    const total = json.queue_total;
+                    statusText.textContent = `Queue (${pos} / ${total})`;
+                    statusText.style.color = "#ff9800";
+
+                    progressBar.classList.add('queued');
+                    progressBar.style.width = "100%";
+
+                    setTimeout(checkStatus, 1000);
+                }
+                else if (json.status === "Processing") {
+                    progressBar.classList.remove('queued');
+                    statusText.style.color = "#f0f0f0";
+
+                    if (json.progress_total) {
+                        const pct = Math.round((json.progress_current / json.progress_total) * 100);
+                        statusText.textContent = `Processing combination ${json.progress_current} of ${json.progress_total} (${pct}%)`;
+                        progressBar.style.width = pct + "%";
+                    } else {
+                        statusText.textContent = "Processing...";
+                        progressBar.style.width = "0%";
+                    }
+                    setTimeout(checkStatus, 1000);
                 }
                 else if (json.status === "Finished") {
+                    progressBar.classList.remove('queued');
                     statusText.textContent = "Simulation Complete!";
+                    statusText.style.color = "#4CAF50";
                     progressBar.style.width = "100%";
                     setTimeout(fetchResult, 500);
                 }
                 else if (json.status === "Failed") {
+                    progressBar.classList.remove('queued');
                     statusText.textContent = "Failed: " + json.error;
-                    statusText.style.color = "red";
+                    statusText.style.color = "#f44336";
+                    progressBar.style.width = "0%";
                 }
                 else {
                     statusText.textContent = "Status: " + json.status;
@@ -282,6 +306,7 @@
                 }
             } catch (e) {
                 console.error(e);
+                setTimeout(checkStatus, 2000);
             }
         }
 

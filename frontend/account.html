@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <title>User Profile</title>
+    <link rel="stylesheet" href="/style.css">
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -35,13 +36,29 @@
 
         .role-badge {
             display: inline-block;
-            background-color: #333;
-            color: #4CAF50;
             padding: 2px 8px;
             border-radius: 4px;
             font-weight: bold;
-            border: 1px solid #4CAF50;
+            border: 1px solid transparent;
             font-size: 0.9em;
+            background-color: #333;
+            color: #ccc;
+        }
+
+        .role-container.Admin .role-badge {
+            color: #ff4444;
+            border-color: #ff4444;
+            background-color: rgba(255, 68, 68, 0.1);
+        }
+
+        .role-container.Premium .role-badge {
+            color: #ffcc00;
+            border-color: #ffcc00;
+            background-color: rgba(255, 204, 0, 0.1);
+        }
+
+        .role-container.User {
+            display: none;
         }
 
         .logout-btn {
@@ -56,19 +73,6 @@
 
         .logout-btn:hover {
             background-color: #b71c1c;
-        }
-
-        .back-btn {
-            display: inline-block;
-            margin-bottom: 15px;
-            color: #888;
-            text-decoration: none;
-            font-size: 0.9em;
-        }
-
-        .back-btn:hover {
-            color: #ffcc00;
-            text-decoration: underline;
         }
 
         table {
@@ -116,12 +120,13 @@
 </head>
 
 <body>
-
     <div class="header">
         <div class="user-info">
-            <a href="/" class="back-btn">← Back to Simulator</a>
-            <h1>Profile: {{USERNAME}}</h1>
-            <p>User Role: <span class="role-badge">{{ROLE}}</span></p>
+            <a href="/" class="back-btn">Back to Main menu</a>
+            <h1>{{USERNAME}}</h1>
+            <p class="role-container {{ROLE}}">
+                <span class="role-badge">{{ROLE}}</span>
+            </p>
         </div>
 
         <a href="/user/logout" class="logout-btn">Log Out</a>

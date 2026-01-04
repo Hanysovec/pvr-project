@@ -5,9 +5,10 @@ use argon2::{
 };
 use axum::{
     extract::{Form, Path, State},
-    response::{Html, Redirect},
+    response::{Html, Json, Redirect},
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use sqlx::Type;
 use std::fs;
 use tower_sessions::Session;
@@ -18,12 +19,22 @@ pub struct AuthPayload {
     password: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Type, PartialEq, Eq, PartialOrd, Ord)]
 #[sqlx(type_name = "TEXT")]
 pub enum UserRole {
     User,
     Premium,
     Admin,
+}
+impl From<String> for UserRole {
+    fn from(s: String) -> Self {
+        match s.as_str() {
+            "Admin" => UserRole::Admin,
+            "Premium" => UserRole::Premium,
+            "User" => UserRole::User,
+            _ => UserRole::User,
+        }
+    }
 }
 
 #[derive(sqlx::FromRow, Serialize, Debug)]
@@ -36,18 +47,14 @@ pub struct _User {
     pub role: UserRole,
 }
 
+pub const LIMIT_COMBINATIONS_FREE: usize = 50;
+pub const LIMIT_COMBINATIONS_PREMIUM: usize = 200;
+
 pub async fn register_page() -> Html<String> {
-    Html(
-        r#"
-        <h1>Register</h1>
-        <form action="/user/register" method="post">
-            <input type="text" name="username" placeholder="Username" required><br>
-            <input type="password" name="password" placeholder="Password" required><br>
-            <button type="submit">Register</button>
-        </form>
-    "#
-        .to_string(),
-    )
+    match fs::read_to_string("frontend/register.html") {
+        Ok(content) => Html(content),
+        Err(_) => Html("<h1>Error: Login page not found</h1>".to_string()),
+    }
 }
 
 pub async fn register(
@@ -166,4 +173,33 @@ pub async fn get_user_profile(
         .replace("{{HISTORY_ROWS}}", &history_html);
 
     Html(html)
+}
+
+pub async fn get_user_limits(State(state): State<AppState>, session: Session) -> Json<Value> {
+    let user_id: Option<i64> = session.get("user_id").await.unwrap_or(None);
+    let role_str = if let Some(id) = user_id {
+        sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await
+            .unwrap_or(None)
+            .unwrap_or("User".to_string())
+    } else {
+        "User".to_string()
+    };
+
+    let role = UserRole::from(role_str);
+    let is_premium = role >= UserRole::Premium;
+
+    let limit = if is_premium {
+        LIMIT_COMBINATIONS_PREMIUM
+    } else {
+        LIMIT_COMBINATIONS_FREE
+    };
+
+    Json(json!({
+        "limit": limit,
+        "is_premium": is_premium,
+        "role": role
+    }))
 }

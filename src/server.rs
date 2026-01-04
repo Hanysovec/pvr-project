@@ -16,7 +16,7 @@ use std::{
     env, fs,
     net::SocketAddr,
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use tokio::sync::{Mutex, Semaphore, mpsc};
 use tower_http::services::ServeDir;
@@ -24,7 +24,7 @@ use uuid::Uuid;
 use futures::future::join_all;
 use sqlx::{sqlite::SqlitePool, Pool, Sqlite};
 
-use crate::{simulate, users};
+use crate::{admin, simulate, users::{self, UserRole, LIMIT_COMBINATIONS_FREE, LIMIT_COMBINATIONS_PREMIUM}};
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 enum SimStatus {
@@ -35,9 +35,18 @@ enum SimStatus {
     Failed(String),
 }
 
+#[derive(Debug, Clone)]
+struct QueueItem {
+    id: String,
+    is_premium: bool,
+    created_at: SystemTime,
+}
+
 #[derive(Clone)]
 pub struct AppState {
-    queue_sender: mpsc::Sender<SimulationJob>,
+    premium_queue: mpsc::Sender<SimulationJob>,
+    standard_queue: mpsc::Sender<SimulationJob>,
+    queue_tracker: Arc<Mutex<Vec<QueueItem>>>,
     job_statuses: Arc<DashMap<String, SimStatus>>,
     http_client: reqwest::Client,
     blizzard_auth: Arc<Mutex<BlizzardAuth>>,
@@ -54,6 +63,7 @@ enum JobType {
 struct SimulationJob {
     id: String,
     job_type: JobType,
+    user_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -201,15 +211,20 @@ pub async fn run_server() -> Result<(), String> {
     sqlx::query("
         CREATE TABLE IF NOT EXISTS history (
             id TEXT PRIMARY KEY,
+            user_id INTEGER,
             sim_type TEXT NOT NULL,
             dps REAL,
             result_json TEXT NOT NULL,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(id)
         );
     ").execute(&db).await.map_err(|e| e.to_string())?;
 
     let job_statuses = Arc::new(DashMap::new());
-    let (tx, mut rx) = mpsc::channel::<SimulationJob>(100);
+    
+    let (tx_premium, mut rx_premium) = mpsc::channel::<SimulationJob>(100);
+    let (tx_standard, mut rx_standard) = mpsc::channel::<SimulationJob>(100);
+    let queue_tracker = Arc::new(Mutex::new(Vec::new()));
     let client_id = env::var("BLIZZARD_CLIENT_ID").expect("Error BLIZZARD_CLIENT_ID");
     let client_secret = env::var("BLIZZARD_CLIENT_SECRET").expect("Error BLIZZARD_CLIENT_SECRET");
     let icon_cache = Arc::new(DashMap::new());
@@ -222,7 +237,9 @@ pub async fn run_server() -> Result<(), String> {
         .with_expiry(Expiry::OnInactivity(SessionDuration::seconds(3600)));
 
     let state = AppState {
-        queue_sender: tx,
+        premium_queue: tx_premium,
+        standard_queue: tx_standard,
+        queue_tracker: queue_tracker.clone(),
         job_statuses: job_statuses.clone(),
         http_client: reqwest::Client::new(),
         blizzard_auth: Arc::new(Mutex::new(BlizzardAuth {
@@ -238,74 +255,81 @@ pub async fn run_server() -> Result<(), String> {
     tokio::spawn(async move {
         let semaphore = Arc::new(Semaphore::new(MAX_RUNNING_SIMS));
 
-        while let Some(job) = rx.recv().await {
+        loop {
             let permit = semaphore.clone().acquire_owned().await.unwrap();
             let statuses = job_statuses.clone();
             let db_conn = db.clone();
+            let tracker_clone = queue_tracker.clone();
 
-            tokio::spawn(async move {
-                statuses.insert(job.id.clone(), SimStatus::Processing);
-                println!("Starting job: {}", job.id);
-                let statuses_clone = statuses.clone();
-                let job_id = job.id.clone();
-                let output_path = format!("files/{}.json", job_id);
-                let output_path_clone = output_path.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    match job.job_type {
-                        JobType::QuickSim { base_simc } => {
-                            let simc_path = format!("files/{}.simc", job_id);
-                            fs::write(&simc_path, format!("{}\nmax_time=300\niterations=1000\n", base_simc)).unwrap();
-                            let res = simulate::run_simc(&simc_path, &output_path_clone);
-                            let _ = fs::remove_file(simc_path);
-                            res.map(|_| "QuickSim".to_string())
-                        },
-                        JobType::TopGear { base_simc, selected_items } => {
-                            process_topgear_batch(
-                                &job_id, 
-                                &base_simc, 
-                                selected_items, 
-                                &output_path_clone, 
-                                statuses_clone
-                            ).map(|_| "TopGear".to_string())
-                        }
-                    }
-                }).await;
+            let job = tokio::select! {
+                biased;
+                Some(job) = rx_premium.recv() => Some(job),
+                Some(job) = rx_standard.recv() => Some(job),
+                else => None,
+            };
 
-                match result {
-                    Ok(Ok(sim_type)) => { // OK
-                        if let Ok(json_content) = fs::read_to_string(&output_path) {
-                            let dps = extract_dps_from_json(&json_content, &sim_type);
-                            let query_res = sqlx::query("INSERT INTO history (id, sim_type, dps, result_json) VALUES (?, ?, ?, ?)")
-                                .bind(&job.id)
-                                .bind(&sim_type)
-                                .bind(dps)
-                                .bind(&json_content)
-                                .execute(&db_conn)
-                                .await;
-
-                            if let Err(e) = query_res {
-                                eprintln!("DB Insert Error: {}", e);
-                                statuses.insert(job.id.clone(), SimStatus::Failed("Database write error".into()));
-                            } else {
-                                statuses.insert(job.id.clone(), SimStatus::Finished);
-                                println!("Finished & Saved job: {}", job.id);
-                                let _ = fs::remove_file(&output_path); 
-                            }
-                        } else {
-                            statuses.insert(job.id.clone(), SimStatus::Failed("Output file missing".into()));
-                        }
-                    }
-                    Ok(Err(e)) => { // SimC Error
-                        let err_msg = format!("Simulation Error: {}", e);
-                        statuses.insert(job.id.clone(), SimStatus::Failed(err_msg));
-                    }
-                    Err(e) => { // Task Panic
-                        let err_msg = format!("Task Execution Error: {}", e);
-                        statuses.insert(job.id.clone(), SimStatus::Failed(err_msg));
+            if let Some(job) = job {
+                {
+                    let mut tracker = tracker_clone.lock().await;
+                    if let Some(pos) = tracker.iter().position(|x| x.id == job.id) {
+                        tracker.remove(pos);
                     }
                 }
-                drop(permit);
-            });
+                tokio::spawn(async move {
+                    statuses.insert(job.id.clone(), SimStatus::Processing);
+                    let job_id = job.id.clone();
+                    let output_path = format!("files/{}.json", job_id);
+                    let output_path_clone = output_path.clone();
+                    let statuses_clone = statuses.clone();
+
+                    let result = tokio::task::spawn_blocking(move || {
+                        match job.job_type {
+                            JobType::QuickSim { base_simc } => {
+                                let simc_path = format!("files/{}.simc", job_id);
+                                let _ = fs::write(&simc_path, format!("{}\nmax_time=300\niterations=1000\n", base_simc));
+                                let res = simulate::run_simc(&simc_path, &output_path_clone);
+                                let _ = fs::remove_file(simc_path);
+                                res.map(|_| "QuickSim".to_string())
+                            },
+                            JobType::TopGear { base_simc, selected_items } => {
+                                process_topgear_batch(
+                                    &job_id, 
+                                    &base_simc, 
+                                    selected_items, 
+                                    &output_path_clone, 
+                                    statuses_clone
+                                ).map(|_| "TopGear".to_string())
+                            }
+                        }
+                    }).await;
+                    match result {
+                        Ok(Ok(sim_type)) => {
+                            if let Ok(json_content) = fs::read_to_string(&output_path) {
+                                let dps = extract_dps_from_json(&json_content, &sim_type);
+                                let _ = sqlx::query("INSERT INTO history (id, user_id, sim_type, dps, result_json) VALUES (?, ?, ?, ?, ?)")
+                                    .bind(&job.id)
+                                    .bind(job.user_id)
+                                    .bind(&sim_type)
+                                    .bind(dps)
+                                    .bind(&json_content)
+                                    .execute(&db_conn)
+                                    .await;
+                                
+                                statuses.insert(job.id.clone(), SimStatus::Finished);
+                                println!("Finished job: {}", job.id);
+                                let _ = fs::remove_file(&output_path); 
+                            } else {
+                                statuses.insert(job.id.clone(), SimStatus::Failed("Output missing".into()));
+                            }
+                        }
+                        Ok(Err(e)) => { statuses.insert(job.id.clone(), SimStatus::Failed(format!("Sim Error: {}", e))); }
+                        Err(e) => { statuses.insert(job.id.clone(), SimStatus::Failed(format!("Task Error: {}", e))); }
+                    }
+                    drop(permit);
+                });
+            } else {
+                break;
+            }
         }
     });
 
@@ -325,11 +349,17 @@ pub async fn run_server() -> Result<(), String> {
         .route("/api/wowhead_tooltip", get(get_wowhead_tooltip))
         .route("/api/item_icon/{id}", get(get_item_icon_only)) 
         .route("/api/item_tooltip/{id}", get(get_item_tooltip))
+        .route("/api/user/limits", get(users::get_user_limits))
         // USER
         .route("/user/register", get(users::register_page).post(users::register))
         .route("/user/login", post(users::login))
         .route("/user/logout", get(users::logout))
-        .route("/user/profile/{name}", get(users::get_user_profile))
+        .route("/user/profile/{username}", get(users::get_user_profile))
+        // ADMIN
+        .route("/admin", get(admin::admin_dashboard))
+        .route("/admin/role", post(admin::update_role))
+        .route("/admin/delete", post(admin::delete_user))
+        .route("/admin/password", post(admin::reset_password))
         .fallback_service(ServeDir::new("frontend"))
         .layer(session_layer)
         .with_state(state);
@@ -347,19 +377,17 @@ pub async fn run_server() -> Result<(), String> {
         .map_err(|e| format!("Error server: {}", e))
 }
 
-async fn get_index(session: Session) -> Html<String> {
-    let html_content = fs::read_to_string("frontend/index.html").unwrap_or_default();
+async fn generate_header(session: &Session) -> String {
     let username: Option<String> = session.get("username").await.unwrap_or(None);
-    let placeholder = r#"<div id="user-menu-placeholder"></div>"#;
-
-    let menu_html = if let Some(user) = username {
+    
+    if let Some(user) = username {
         format!(
             r#"
             <div class="user-menu">
-                <button onclick="toggleLogin()" class="dropbtn" style="background-color: #ffcc00; color: black;">{} ▼</button>
-                <div id="myDropdown" class="dropdown-content">
-                    <a href="/user/profile/{}" style="display:block; padding:5px; color:#ffcc00; text-decoration:none; border-bottom:1px solid #444;">My Profile</a>
-                    <a href="/user/logout" style="display:block; padding:5px; color:#ff5555; text-decoration:none;">Log Out</a>
+                <button class="dropbtn" style="background-color: #ffcc00; color: black;">{} ▼</button>
+                <div class="dropdown-content">
+                    <a href="/user/profile/{}" style="color:#ffcc00; border-bottom:1px solid #444;">My Profile</a>
+                    <a href="/user/logout" style="color:#ff5555;">Log Out</a>
                 </div>
             </div>
             "#,
@@ -368,61 +396,79 @@ async fn get_index(session: Session) -> Html<String> {
     } else {
         r#"
         <div class="user-menu">
-            <button onclick="toggleLogin()" class="dropbtn">Account ▼</button>
-            <div id="myDropdown" class="dropdown-content">
-                <div id="login-form">
-                    <form action="/user/login" method="post">
-                        <label style="font-size:0.8em; color:#aaa">Username</label>
-                        <input type="text" name="username" placeholder="Name" required style="width:100%; margin:5px 0; padding:5px;">
-                        
-                        <label style="font-size:0.8em; color:#aaa">Password</label>
-                        <input type="password" name="password" placeholder="Pass" required style="width:100%; margin:5px 0; padding:5px;">
-                        
-                        <button type="submit" style="width:100%; margin-top:10px; padding:5px; cursor:pointer;">Log In</button>
-                    </form>
-                    <div style="margin-top:10px; text-align:center;">
-                        <a href="/user/register" style="color:#ccc; font-size:0.9em;">Register new account</a>
-                    </div>
+            <button class="dropbtn">Log In ▼</button>
+            <div class="dropdown-content" style="padding: 10px;">
+                <form action="/user/login" method="post">
+                    <input type="text" name="username" placeholder="Username" required style="width: 90%; margin-bottom: 5px; padding: 5px; background: #111; border: 1px solid #555; color: white;">
+                    <input type="password" name="password" placeholder="Password" required style="width: 90%; margin-bottom: 5px; padding: 5px; background: #111; border: 1px solid #555; color: white;">
+                    <button type="submit" style="width: 100%; cursor: pointer; background: #4CAF50; border: none; color: white; padding: 5px;">Log In</button>
+                </form>
+                <div style="margin-top:5px; text-align:center;">
+                    <a href="/user/register" style="font-size: 0.8em; padding: 5px;">Register</a>
                 </div>
             </div>
         </div>
         "#.to_string()
-    };
-    Html(html_content.replace(placeholder, &menu_html))
+    }
+}
+
+async fn get_index(session: Session) -> Html<String> {
+    let template = fs::read_to_string("frontend/index.html").unwrap_or_default();
+    let header_html = generate_header(&session).await;
+    let html = template.replace("{{HEADER}}", &header_html);
+    Html(html)
 }
 
 async fn post_simulation(
     State(state): State<AppState>,
+    session: Session,
     Form(input): Form<SimulationInput>,
 ) -> Redirect {
     let id = Uuid::new_v4().to_string();
     let _ = fs::create_dir_all("files");
 
+    let user_id: Option<i64> = session.get("user_id").await.unwrap_or(None);
+    let role_str: String = session.get("role").await.unwrap_or(Some("User".to_string())).unwrap_or("User".to_string());
+    let role = UserRole::from(role_str);
+    let is_premium = role >= UserRole::Premium;
+
     state.job_statuses.insert(id.clone(), SimStatus::Queued);
 
-    let job_type = JobType::QuickSim { 
-        base_simc: input.input_content 
-    };
-    
+    {
+        let mut tracker = state.queue_tracker.lock().await;
+        tracker.push(QueueItem {
+            id: id.clone(),
+            is_premium,
+            created_at: SystemTime::now(),
+        });
+    }
+
     let job = SimulationJob {
         id: id.clone(),
-        job_type,
+        job_type: JobType::QuickSim { base_simc: input.input_content },
+        user_id,
     };
 
-    if let Err(e) = state.queue_sender.send(job).await {
+    let queue = if is_premium { &state.premium_queue } else { &state.standard_queue };
+    if let Err(e) = queue.send(job).await {
         eprintln!("Failed to queue job: {}", e);
-        state
-            .job_statuses
-            .insert(id.clone(), SimStatus::Failed("Queue full or closed".into()));
+        state.job_statuses.insert(id.clone(), SimStatus::Failed("Queue full".into()));
     }
 
     Redirect::to(&format!("/quicksim/{}", id))
 }
 
-async fn get_quicksim(Path(id): Path<String>) -> Html<String> {
+async fn get_quicksim(
+    session: Session, 
+    Path(id): Path<String>
+) -> Html<String> {
     match fs::read_to_string("frontend/quicksim_result.html") {
         Ok(template) => {
-            let html = template.replace("{{ID}}", &id);
+            let header_html = generate_header(&session).await;
+            let html = template
+                .replace("{{ID}}", &id)
+                .replace("{{HEADER}}", &header_html);
+            
             Html(html)
         }
         Err(_) => Html("<h1>Error: Template not found</h1>".to_string()),
@@ -447,7 +493,32 @@ async fn get_status_check(
 ) -> Json<Value> {
     if let Some(status) = state.job_statuses.get(&id) {
         match status.value() {
-            SimStatus::Queued => return Json(serde_json::json!({ "status": "Queued" })),
+            SimStatus::Queued => {
+                let tracker = state.queue_tracker.lock().await;
+                if let Some(my_item) = tracker.iter().find(|x| x.id == id) {
+                    let total_in_queue = tracker.len();
+                    
+                    let position = tracker.iter().filter(|other| {
+                        if my_item.is_premium {
+                            other.is_premium && other.created_at < my_item.created_at
+                        } else {
+                            if other.is_premium {
+                                true
+                            } else {
+                                other.created_at < my_item.created_at
+                            }
+                        }
+                    }).count() + 1;
+
+                    return Json(serde_json::json!({
+                        "status": "Queued",
+                        "queue_position": position,
+                        "queue_total": total_in_queue
+                    }));
+                } else {
+                    return Json(serde_json::json!({ "status": "Queued", "queue_position": 1, "queue_total": 1 }));
+                }
+            },
             SimStatus::Processing => return Json(serde_json::json!({ "status": "Processing" })),
             SimStatus::TopGearProcessing { current, total } => return Json(serde_json::json!({ 
                 "status": "Processing", "progress_current": current, "progress_total": total 
@@ -456,15 +527,9 @@ async fn get_status_check(
             SimStatus::Failed(e) => return Json(serde_json::json!({ "status": "Failed", "error": e })),
         }
     }
-    let exists = sqlx::query("SELECT id FROM history WHERE id = ?")
-        .bind(&id)
-        .fetch_optional(&state.db)
-        .await
-        .unwrap_or(None);
-
-    if exists.is_some() {
-        return Json(serde_json::json!({ "status": "Finished" }));
-    }
+    
+    let exists = sqlx::query("SELECT id FROM history WHERE id = ?").bind(&id).fetch_optional(&state.db).await.unwrap_or(None);
+    if exists.is_some() { return Json(serde_json::json!({ "status": "Finished" })); }
     Json(serde_json::json!({ "status": "Unknown" }))
 }
 
@@ -743,17 +808,27 @@ async fn get_item_tooltip(
     })
 }
 
-async fn get_topgear_result_page(Path(id): Path<String>) -> Html<String> {
+async fn get_topgear_result_page(
+    session: Session, 
+    Path(id): Path<String>
+) -> Html<String> {
     match fs::read_to_string("frontend/topgear_result.html") {
         Ok(template) => {
-            let html = template.replace("{{ID}}", &id);
+            let header_html = generate_header(&session).await;
+            let html = template
+                .replace("{{ID}}", &id)
+                .replace("{{HEADER}}", &header_html);
+            
             Html(html)
         }
         Err(_) => Html("<h1>Error: Template not found</h1>".to_string()),
     }
 }
 
-async fn post_topgear(Form(input): Form<SimulationInput>) -> Html<String> {
+async fn post_topgear(
+    session: Session, 
+    Form(input): Form<SimulationInput>
+) -> Html<String> {
     let items_map = parse_simc_input(&input.input_content);
     let mut grid_html = String::new();
     let sorted_keys = vec![
@@ -816,13 +891,13 @@ async fn post_topgear(Form(input): Form<SimulationInput>) -> Html<String> {
         }
     }
 
-    let template = fs::read_to_string("frontend/topgear.html")
-        .unwrap_or_else(|_| "<h1>Error: Template missing</h1>".to_string());
-    let html_with_grid = template.replace("{{ITEMS_GRID}}", &grid_html);
-    let final_html = html_with_grid.replace(
-        "// {{BASE_SIMC_INJECT}}", 
-        &format!("const BASE_SIMC = `{}`;", input.input_content)
-    );
+    let template = fs::read_to_string("frontend/topgear.html").unwrap_or_default();
+    let header_html = generate_header(&session).await;
+    let final_html = template
+        .replace("{{ITEMS_GRID}}", &grid_html)
+        .replace("{{HEADER}}", &header_html)
+        .replace("// {{BASE_SIMC_INJECT}}", &format!("const BASE_SIMC = `{}`;", input.input_content));
+        
     Html(final_html)
 }
 
@@ -930,12 +1005,36 @@ fn process_topgear_batch(
 
 async fn post_run_topgear_batch(
     State(state): State<AppState>,
+    session: Session,
     Json(payload): Json<TopGearRunRequest>,
-) -> Redirect {
+) -> Result<Redirect, String> {
+    let user_id: Option<i64> = session.get("user_id").await.unwrap_or(None);
+    
+    let role_str: String = session.get("role").await.unwrap_or(Some("User".to_string())).unwrap_or("User".to_string());
+    let role = UserRole::from(role_str);
+    let is_premium = role >= UserRole::Premium;
+
+    let combinations = generate_combinations(payload.selected_items.clone());
+    let count = combinations.len();
+    let limit = if is_premium { LIMIT_COMBINATIONS_PREMIUM } else { LIMIT_COMBINATIONS_FREE };
+
+    if count > limit {
+        return Err(format!("Too many combinations ({}). Your limit is {}. Upgrade to Premium!", count, limit));
+    }
+
     let id = Uuid::new_v4().to_string();
     let _ = fs::create_dir_all("files");
     
     state.job_statuses.insert(id.clone(), SimStatus::Queued);
+
+    {
+        let mut tracker = state.queue_tracker.lock().await;
+        tracker.push(QueueItem {
+            id: id.clone(),
+            is_premium,
+            created_at: SystemTime::now(),
+        });
+    }
 
     let job = SimulationJob {
         id: id.clone(),
@@ -943,13 +1042,17 @@ async fn post_run_topgear_batch(
             base_simc: payload.base_simc,
             selected_items: payload.selected_items 
         },
+        user_id,
     };
 
-    if let Err(e) = state.queue_sender.send(job).await {
+    let queue = if is_premium { &state.premium_queue } else { &state.standard_queue };
+
+    if let Err(e) = queue.send(job).await {
         eprintln!("Queue error: {}", e);
+        return Err("Queue full".into());
     }
 
-    Redirect::to(&format!("/topgear/{}", id))
+    Ok(Redirect::to(&format!("/topgear/{}", id)))
 }
 
 async fn get_wowhead_tooltip(

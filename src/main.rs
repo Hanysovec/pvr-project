@@ -1,3 +1,4 @@
+mod admin;
 mod server;
 mod simulate;
 mod users;
