@@ -104,7 +104,7 @@ pub async fn run_server() -> Result<(), String> {
 
     tokio::spawn(async move {
         let semaphore = Arc::new(Semaphore::new(MAX_RUNNING_SIMS));
-
+        tracing::info!("Worker loop started with queue size: {}", MAX_RUNNING_SIMS);
         loop {
             let permit = semaphore.clone().acquire_owned().await.unwrap();
             let statuses = job_statuses.clone();
@@ -125,6 +125,12 @@ pub async fn run_server() -> Result<(), String> {
                         tracker.remove(pos);
                     }
                 }
+                tracing::info!(
+                    "Starting simulation job: {} (Type: {:?}, User: {:?})",
+                    job.id,
+                    job.job_type,
+                    job.user_id
+                );
                 tokio::spawn(async move {
                     statuses.insert(job.id.clone(), SimStatus::Processing);
                     let job_id = job.id.clone();
@@ -160,22 +166,33 @@ pub async fn run_server() -> Result<(), String> {
                         Ok(Ok(sim_type)) => {
                             if let Ok(json_content) = fs::read_to_string(&output_path) {
                                 let dps = extract_dps_from_json(&json_content, &sim_type);
-                                let _ = sqlx::query("INSERT INTO history (id, user_id, sim_type, dps, result_json) VALUES (?, ?, ?, ?, ?)")
+                                if let Err(e) = sqlx::query("INSERT INTO history (id, user_id, sim_type, dps, result_json) VALUES (?, ?, ?, ?, ?)")
                                     .bind(&job.id)
                                     .bind(job.user_id)
                                     .bind(&sim_type)
                                     .bind(dps)
                                     .bind(&json_content)
                                     .execute(&db_conn)
-                                    .await;
+                                    .await {
+                                        tracing::error!("DB Insert Error for job {}: {}", job.id, e);
+                                    }
 
                                 statuses.insert(job.id.clone(), SimStatus::Finished);
-                                println!("Finished job: {}", job.id);
+                                tracing::info!(
+                                    "Job finished successfully: {} (SimType: {})",
+                                    job.id,
+                                    sim_type
+                                );
                                 let _ = fs::remove_file(&output_path);
                             } else {
                                 statuses.insert(
                                     job.id.clone(),
                                     SimStatus::Failed("Output missing".into()),
+                                );
+                                tracing::error!(
+                                    "Output missing for job {}: path {}",
+                                    job.id,
+                                    output_path
                                 );
                             }
                         }
@@ -184,12 +201,14 @@ pub async fn run_server() -> Result<(), String> {
                                 job.id.clone(),
                                 SimStatus::Failed(format!("Sim Error: {}", e)),
                             );
+                            tracing::error!("Sim Error for ID {}: {}", job.id, e);
                         }
                         Err(e) => {
                             statuses.insert(
                                 job.id.clone(),
                                 SimStatus::Failed(format!("Task Error: {}", e)),
                             );
+                            tracing::error!("Task Error for ID {}: {}", job.id, e);
                         }
                     }
                     drop(permit);
@@ -238,7 +257,7 @@ pub async fn run_server() -> Result<(), String> {
 
     // let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    println!("Server running on http://{}", addr);
+    tracing::info!("Server listening on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -256,7 +275,8 @@ async fn get_index(session: Session) -> Html<String> {
     Html(html)
 }
 
-async fn handler_404(_session: Session) -> (StatusCode, Html<String>) {
+async fn handler_404(uri: axum::http::Uri) -> (StatusCode, Html<String>) {
+    tracing::warn!("404 Not Found: {}", uri.path());
     match fs::read_to_string("frontend/404.html") {
         Ok(content) => (StatusCode::NOT_FOUND, Html(content)),
         Err(_) => (

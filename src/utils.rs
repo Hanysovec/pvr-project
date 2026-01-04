@@ -47,6 +47,7 @@ pub struct QueueItem {
     pub created_at: SystemTime,
 }
 
+#[derive(Debug)]
 pub enum JobType {
     QuickSim {
         base_simc: String,

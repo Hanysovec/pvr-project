@@ -100,7 +100,7 @@ async fn get_blizzard_token(state: &AppState) -> Result<String, String> {
         }
     }
 
-    println!("fetching new token..");
+    tracing::info!("fetching new token..");
     let params = [("grant_type", "client_credentials")];
 
     let response = state
@@ -113,7 +113,12 @@ async fn get_blizzard_token(state: &AppState) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
 
     if !response.status().is_success() {
-        return Err(format!("Failed to auth: {}", response.status()));
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        tracing::error!("Blizzard Auth Failed. Status: {}, Body: {}", status, text);
+        return Err(format!("Failed to auth: {}", status));
+    } else {
+        tracing::info!("Successfully got new Blizzard API token");
     }
 
     let token_data: BlizzardTokenResponse = response.json().await.map_err(|e| e.to_string())?;
@@ -257,7 +262,8 @@ pub async fn get_item_icon_only(
     }
     let token = match get_blizzard_token(&state).await {
         Ok(t) => t,
-        Err(_) => {
+        Err(e) => {
+            tracing::error!("Blizzard Item API error for ID {}: {}", id, e);
             return Json(ItemIconResponse {
                 icon_url: "".into(),
             });
@@ -298,6 +304,7 @@ pub async fn get_item_tooltip(
     let token = match get_blizzard_token(&state).await {
         Ok(t) => t,
         Err(e) => {
+            tracing::error!("Blizzard Item API error for ID {}: {}", id, e);
             return Json(ItemTooltipResponse {
                 stats_html: format!("Error auth: {}", e),
                 weapon_type: "".into(),
@@ -402,7 +409,7 @@ pub async fn get_wowhead_tooltip(
                 return Json(json);
             }
         }
-        Err(e) => eprintln!("Wowhead proxy error: {}", e),
+        Err(e) => tracing::error!("Wowhead proxy error: {}", e),
     }
 
     Json(serde_json::json!({ "error": "Failed to fetch tooltip" }))

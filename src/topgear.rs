@@ -156,7 +156,7 @@ pub async fn post_run_topgear_batch(
     let queue = if is_premium { &state.premium_queue } else { &state.standard_queue };
 
     if let Err(e) = queue.send(job).await {
-        eprintln!("Queue error: {}", e);
+        tracing::error!("Queue error: {}", e);
         return Err("Queue full".into());
     }
 
@@ -176,7 +176,10 @@ pub async fn get_topgear_result_page(
             
             Html(html)
         }
-        Err(_) => Html("<h1>Error: Template not found</h1>".to_string()),
+        Err(e) => {
+            tracing::error!("Template for topgear not found: {}", e);
+            Html("<h1>Error: Template not found</h1>".to_string())
+        }
     }
 }
 
@@ -231,7 +234,7 @@ pub fn process_topgear_batch(
 ) -> std::io::Result<()> {
     let combinations = generate_combinations(items);
     let total = combinations.len();
-    println!("TopGear {}: Generated {} combinations", id, total);
+    tracing::info!("TopGear {}: Generated {} combinations", id, total);
 
     job_statuses.insert(
         id.to_string(),
@@ -261,7 +264,7 @@ pub fn process_topgear_batch(
         let temp_json_path = format!("files/{}_{}.json", id, i);
 
         if let Err(e) = fs::write(&temp_simc_path, &content) {
-            eprintln!("Write err: {}", e);
+            tracing::error!("Write err: {}", e);
             continue;
         }
 

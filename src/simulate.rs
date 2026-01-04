@@ -7,7 +7,7 @@ pub fn run_simc(input_file: &str, output_json: &str) -> std::io::Result<()> {
         .status()?;
 
     if !status.success() {
-        println!("SimulationCraft error: {:?}", status);
+        tracing::error!("SimulationCraft error: {:?}", status);
     }
     Ok(())
 }

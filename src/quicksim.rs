@@ -58,7 +58,7 @@ pub async fn post_simulation(
         &state.standard_queue
     };
     if let Err(e) = queue.send(job).await {
-        eprintln!("Failed to queue job: {}", e);
+        tracing::error!("Failed to queue job: {}", e);
         state
             .job_statuses
             .insert(id.clone(), SimStatus::Failed("Queue full".into()));
@@ -77,6 +77,9 @@ pub async fn get_quicksim(session: Session, Path(id): Path<String>) -> Html<Stri
 
             Html(html)
         }
-        Err(_) => Html("<h1>Error: Template not found</h1>".to_string()),
+        Err(e) => {
+            tracing::error!("Template for quicksim not found: {}", e);
+            Html("<h1>Error: Template not found</h1>".to_string())
+        }
     }
 }

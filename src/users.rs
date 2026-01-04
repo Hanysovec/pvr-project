@@ -54,7 +54,10 @@ pub const LIMIT_COMBINATIONS_PREMIUM: usize = 200;
 pub async fn register_page() -> Html<String> {
     match fs::read_to_string("frontend/register.html") {
         Ok(content) => Html(content),
-        Err(_) => Html("<h1>Error: Login page not found</h1>".to_string()),
+        Err(_) => {
+            tracing::error!("Error loading register page.");
+            Html("<h1>Error: Register page not found</h1>".to_string())
+        }
     }
 }
 
@@ -220,6 +223,7 @@ mod tests {
     #[test]
     fn test_role_parsing() {
         assert_eq!(UserRole::from("Admin".to_string()), UserRole::Admin);
+        assert_eq!(UserRole::from("Premium".to_string()), UserRole::Premium);
         assert_eq!(
             UserRole::from("SuperDuperAdmin".to_string()),
             UserRole::User
