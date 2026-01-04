@@ -203,3 +203,34 @@ pub async fn get_user_limits(State(state): State<AppState>, session: Session) ->
         "role": role
     }))
 }
+
+/* TEST */
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_role_ordering() {
+        assert!(UserRole::Admin > UserRole::Premium);
+        assert!(UserRole::Premium > UserRole::User);
+        assert!(UserRole::Admin > UserRole::User);
+    }
+
+    #[test]
+    fn test_role_parsing() {
+        assert_eq!(UserRole::from("Admin".to_string()), UserRole::Admin);
+        assert_eq!(
+            UserRole::from("SuperDuperAdmin".to_string()),
+            UserRole::User
+        );
+    }
+
+    #[test]
+    fn test_premium_check() {
+        let role = UserRole::Premium;
+        assert!(role >= UserRole::Premium);
+
+        let role_user = UserRole::User;
+        assert!(!(role_user >= UserRole::Premium));
+    }
+}
