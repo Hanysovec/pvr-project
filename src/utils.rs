@@ -209,6 +209,9 @@ pub fn extract_dps_from_json(json_str: &str, sim_type: &str) -> Option<f64> {
     if sim_type == "TopGear" {
         return v.get("results")?.get(0)?.get("dps")?.as_f64();
     } else {
+        if let Some(dps) = v.get("dps").and_then(|x| x.as_f64()) {
+            return Some(dps);
+        }
         return v
             .get("sim")?
             .get("players")?

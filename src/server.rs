@@ -20,8 +20,7 @@ use crate::{
         get_item_icon_only, get_item_tooltip, get_result_data_from_db, get_status_check,
         get_wowhead_tooltip,
     },
-    quicksim::{get_quicksim, post_simulation},
-    simulate,
+    quicksim::{get_quicksim, post_simulation, process_quicksim_batch},
     topgear::{
         get_topgear_result_page, post_run_topgear_batch, post_topgear, process_topgear_batch,
     },
@@ -140,14 +139,8 @@ pub async fn run_server() -> Result<(), String> {
 
                     let result = tokio::task::spawn_blocking(move || match job.job_type {
                         JobType::QuickSim { base_simc } => {
-                            let simc_path = format!("files/{}.simc", job_id);
-                            let _ = fs::write(
-                                &simc_path,
-                                format!("{}\nmax_time=300\niterations=1000\n", base_simc),
-                            );
-                            let res = simulate::run_simc(&simc_path, &output_path_clone);
-                            let _ = fs::remove_file(simc_path);
-                            res.map(|_| "QuickSim".to_string())
+                            process_quicksim_batch(&job_id, &base_simc, &output_path_clone)
+                                .map(|_| "QuickSim".to_string())
                         }
                         JobType::TopGear {
                             base_simc,

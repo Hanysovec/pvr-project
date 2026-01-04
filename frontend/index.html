@@ -79,6 +79,38 @@
     <p id="result"></p>
 
     <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const loginForm = document.querySelector('form[action="/user/login"]');
+
+            if (loginForm) {
+                loginForm.addEventListener("submit", async (event) => {
+                    event.preventDefault();
+
+                    const formData = new FormData(loginForm);
+                    const params = new URLSearchParams(formData);
+
+                    try {
+                        const response = await fetch("/user/login", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/x-www-form-urlencoded",
+                            },
+                            body: params
+                        });
+
+                        if (response.ok) {
+                            window.location.href = response.url;
+                        } else {
+                            const text = await response.text();
+                            alert("Login Failed: " + text);
+                        }
+                    } catch (error) {
+                        console.error("Error:", error);
+                        alert("Network error occurred.");
+                    }
+                });
+            }
+        });
         const form = document.getElementById('sim-form');
         form.addEventListener('submit', async (e) => {
             e.preventDefault();

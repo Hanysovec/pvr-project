@@ -4,6 +4,7 @@ use argon2::{
 };
 use axum::{
     extract::{Form, Path, State},
+    http::StatusCode,
     response::{Html, Json, Redirect},
 };
 use serde::{Deserialize, Serialize};
@@ -64,12 +65,15 @@ pub async fn register_page() -> Html<String> {
 pub async fn register(
     State(state): State<AppState>,
     Form(payload): Form<AuthPayload>,
-) -> Result<Redirect, String> {
+) -> Result<Redirect, (StatusCode, String)> {
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     let password_hash = argon2
         .hash_password(payload.password.as_bytes(), &salt)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| {
+            tracing::error!("Internal server error hashing: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?
         .to_string();
 
     let result = sqlx::query("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)")
@@ -81,7 +85,7 @@ pub async fn register(
 
     match result {
         Ok(_) => Ok(Redirect::to("/")),
-        Err(_) => Err("Username already taken".to_string()),
+        Err(_) => Err((StatusCode::CONFLICT, "Username already taken".to_string())),
     }
 }
 
@@ -89,16 +93,22 @@ pub async fn login(
     State(state): State<AppState>,
     session: Session,
     Form(payload): Form<AuthPayload>,
-) -> Result<Redirect, String> {
+) -> Result<Redirect, (StatusCode, String)> {
     let row: Option<(i64, String, String)> =
         sqlx::query_as("SELECT id, password_hash, role FROM users WHERE username = ?")
             .bind(&payload.username)
             .fetch_optional(&state.db)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                tracing::error!("Internal DB error: {}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+            })?;
 
     if let Some((id, hash, role_str)) = row {
-        let parsed_hash = PasswordHash::new(&hash).map_err(|e| e.to_string())?;
+        let parsed_hash = PasswordHash::new(&hash).map_err(|e| {
+            tracing::error!("Internal server error parsing hash: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?;
         if Argon2::default()
             .verify_password(payload.password.as_bytes(), &parsed_hash)
             .is_ok()
@@ -111,7 +121,10 @@ pub async fn login(
         }
     }
 
-    Err("Invalid username or password".to_string())
+    Err((
+        StatusCode::UNAUTHORIZED,
+        "Invalid username or password".to_string(),
+    ))
 }
 
 pub async fn logout(session: Session) -> Redirect {

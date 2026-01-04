@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Sim Result</title>
+    <title>QuickSim Result</title>
     <link rel="stylesheet" href="/assets/style.css">
     <style>
         body {
@@ -11,120 +11,313 @@
             padding: 2rem;
             background-color: #1e1e1e;
             color: #f0f0f0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            min-height: 100vh;
-            text-align: center;
-        }
-
-        .status-box {
-            margin-bottom: 20px;
-            font-weight: bold;
-            font-size: 1.2rem;
-            padding: 15px 30px;
-            border-radius: 8px;
-            display: inline-block;
-            background-color: #2a2a2a;
-            border: 1px solid #444;
-            min-width: 200px;
+            max-width: 1000px;
+            margin: 0 auto;
         }
 
         h1 {
             color: #ffcc00;
+            text-align: center;
             margin-bottom: 10px;
         }
 
-        #result {
-            margin-top: 20px;
-            width: 100%;
+        .status-container {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+            border: 1px solid #444;
+        }
+
+        .status-text {
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+
+        #result-container {
+            display: none;
+            animation: fadeIn 0.5s;
+        }
+
+        .summary-box {
             display: flex;
-            justify-content: center;
+            justify-content: space-around;
+            align-items: center;
+            background: #252525;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        .summary-item {
+            text-align: center;
+        }
+
+        .summary-label {
+            color: #888;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .dps-big {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        .meta-big {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #ddd;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: #2a2a2a;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        thead {
+            background-color: #333;
+        }
+
+        th {
+            padding: 12px 15px;
+            text-align: left;
+            color: #ffcc00;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            border-bottom: 2px solid #444;
+        }
+
+        td {
+            padding: 10px 15px;
+            border-bottom: 1px solid #333;
+            vertical-align: middle;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover {
+            background-color: #323232;
+        }
+
+        .col-name {
+            width: 35%;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .col-damage {
+            width: 45%;
+        }
+
+        .col-dps {
+            width: 10%;
+            text-align: right;
+            font-family: monospace;
+            font-size: 1.1em;
+            color: #eee;
+        }
+
+        .col-casts {
+            width: 10%;
+            text-align: right;
+            color: #888;
+        }
+
+        .bar-wrapper {
+            position: relative;
+            width: 100%;
+            height: 24px;
+            background-color: #111;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            background-color: #d32f2f;
+            opacity: 0.8;
+            border-radius: 4px 0 0 4px;
+        }
+
+        .bar-text {
+            position: absolute;
+            top: 0;
+            left: 10px;
+            line-height: 24px;
+            font-size: 0.85em;
+            color: #fff;
+            text-shadow: 1px 1px 2px black;
+            z-index: 2;
+        }
+
+        .bar-pct {
+            position: absolute;
+            top: 0;
+            right: 5px;
+            line-height: 24px;
+            font-size: 0.85em;
+            color: #fff;
+            text-shadow: 1px 1px 2px black;
+            z-index: 2;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
         }
     </style>
 </head>
 
 <body>
     {{HEADER}}
-    <h1>QuickSim: <small style="color: #888; font-size: 0.6em;">{{ID}}</small></h1>
-    <a href="/" class="back-btn">Back to Main menu</a>
 
-    <div id="status" class="status-box">Connecting...</div>
-    <div id="result"></div>
+    <div style="width: 100%; display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+        <a href="/" class="back-btn">Back to Main menu</a>
+        <h1 style="margin:0; flex-grow: 1;">QuickSim Result</h1>
+        <div style="font-family: monospace; color: #888;">{{ID}}</div>
+        <div style="width: 100px;"></div>
+    </div>
+
+    <div id="status-box" class="status-container">
+        <div id="status-text" class="status-text">Checking status...</div>
+    </div>
+
+    <div id="result-container">
+
+        <div class="summary-box">
+            <div class="summary-item">
+                <div class="summary-label">Total DPS</div>
+                <div class="dps-big" id="dps-val">-</div>
+            </div>
+            <div class="summary-item">
+                <div class="summary-label">Fight Length</div>
+                <div class="meta-big" id="time-val">-</div>
+            </div>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th class="col-name">Ability</th>
+                    <th class="col-damage">Damage Breakdown</th>
+                    <th class="col-dps">DPS</th>
+                    <th class="col-casts">Casts</th>
+                </tr>
+            </thead>
+            <tbody id="result-body">
+            </tbody>
+        </table>
+    </div>
 
     <script>
         const simId = "{{ID}}";
+        const statusBox = document.getElementById('status-box');
+        const statusText = document.getElementById('status-text');
+        const resultContainer = document.getElementById('result-container');
 
         async function checkStatus() {
             try {
-                let statusRes = await fetch(`/api/status/${simId}`);
-                let statusJson = await statusRes.json();
-                let statusDiv = document.getElementById("status");
+                let res = await fetch(`/api/status/${simId}`);
+                let json = await res.json();
 
-                if (statusJson.status === "Queued") {
-                    const pos = statusJson.queue_position;
-                    const total = statusJson.queue_total;
-
-                    statusDiv.textContent = `Queue: (${pos} / ${total})`;
-                    statusDiv.style.color = "#ffcc00";
-
-                    setTimeout(checkStatus, 1000);
-
-                } else if (statusJson.status === "Processing") {
-                    if (statusJson.progress_current) {
-                        statusDiv.textContent = `Simulating... (${statusJson.progress_current} / ${statusJson.progress_total})`;
-                    } else {
-                        statusDiv.textContent = "Simulating...";
-                    }
-                    statusDiv.style.color = "#4fc3f7";
-
-                    setTimeout(checkStatus, 1000);
-
-                } else if (statusJson.status === "Finished") {
-                    statusDiv.textContent = "Simulation Finished";
-                    statusDiv.style.color = "#66bb6a";
-                    fetchResult();
-
-                } else if (statusJson.status === "Failed") {
-                    statusDiv.style.color = "#ef5350";
-                    statusDiv.textContent = "Failed: " + (statusJson.error || "Unknown error");
-
+                if (json.status === "Finished") {
+                    statusText.textContent = "Simulation Finished!";
+                    statusText.style.color = "#4CAF50";
+                    setTimeout(fetchResult, 500);
+                } else if (json.status === "Failed") {
+                    statusText.textContent = "Failed: " + (json.error || "Unknown error");
+                    statusText.style.color = "#f44336";
                 } else {
-                    statusDiv.textContent = "Status: " + statusJson.status;
-                    setTimeout(checkStatus, 2000);
+                    let msg = json.status;
+                    if (json.status === "Queued") {
+                        msg = `Queued (${json.queue_position} / ${json.queue_total})`;
+                        statusText.style.color = "#ffcc00";
+                    } else {
+                        msg = "Simulating...";
+                        statusText.style.color = "#4fc3f7";
+                    }
+                    statusText.textContent = msg;
+                    setTimeout(checkStatus, 1000);
                 }
             } catch (e) {
                 console.error(e);
-                setTimeout(checkStatus, 3000);
+                setTimeout(checkStatus, 2000);
             }
         }
 
         async function fetchResult() {
-            let res = await fetch(`/quicksim/${simId}/data`);
-            if (res.ok) {
-                let json = await res.json();
-                let dps = 0;
+            try {
+                let res = await fetch(`/quicksim/${simId}/data`);
+                if (!res.ok) throw new Error("Data not found");
 
-                if (json.dps) {
-                    dps = json.dps;
-                }
-                else if (json.sim && json.sim.players) {
-                    try {
-                        dps = json.sim.players[0].collected_data.dps.mean;
-                    } catch (e) { }
-                }
-
-                if (dps > 0) {
-                    document.getElementById("result").innerHTML =
-                        `<div style="font-size: 2rem; font-weight: bold; margin-top: 20px;">
-                            DPS: <span style="color: #4CAF50;">${Math.round(dps).toLocaleString()}</span>
-                        </div>`;
-                } else {
-                    document.getElementById("result").innerHTML = "<p>Error parsing result (DPS not found).</p>";
-                }
+                let data = await res.json();
+                renderData(data);
+            } catch (e) {
+                statusText.textContent = "Error loading result data.";
+                statusText.style.color = "red";
+                console.error(e);
             }
         }
 
+        function renderData(data) {
+            statusBox.style.display = 'none';
+            resultContainer.style.display = 'block';
+
+            document.getElementById('dps-val').innerText = Math.round(data.dps).toLocaleString();
+
+            const mins = Math.floor(data.fight_length / 60);
+            const secs = Math.round(data.fight_length % 60);
+            document.getElementById('time-val').innerText = `${mins}m ${secs}s`;
+
+            const tbody = document.getElementById('result-body');
+            tbody.innerHTML = "";
+
+            if (data.spells && data.spells.length > 0) {
+                data.spells.forEach(spell => {
+                    const tr = document.createElement('tr');
+
+                    const dmgFmt = Math.round(spell.total_damage).toLocaleString();
+                    const dpsFmt = Math.round(spell.dps).toLocaleString();
+                    const pctFmt = spell.percent.toFixed(1) + "%";
+                    const casts = spell.cast_count > 0 ? spell.cast_count : "-";
+
+                    const barColor = "#ff4444";
+
+                    tr.innerHTML = `
+                        <td class="col-name">${spell.name}</td>
+                        <td class="col-damage">
+                            <div class="bar-wrapper">
+                                <div class="bar-fill" style="width: ${spell.percent}%; background-color: ${barColor};"></div>
+                                <div class="bar-text">${dmgFmt}</div>
+                                <div class="bar-pct">${pctFmt}</div>
+                            </div>
+                        </td>
+                        <td class="col-dps">${dpsFmt}</td>
+                        <td class="col-casts">${casts}</td>
+                    `;
+
+                    tbody.appendChild(tr);
+                });
+            } else {
+                tbody.innerHTML = "<tr><td colspan='4' style='text-align:center'>No damage data found.</td></tr>";
+            }
+        }
         checkStatus();
     </script>
 </body>
